@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const NOTION_DB_ID = "0d76a3f3f2c845a8a006bcf64a590ae2";
+const NOTION_DB_ID = "0d76a3f3-f2c8-45a8-a006-bcf64a590ae2";
+// 실제 ID: 0d76a3f3-f2c8-45a8-a006-bcf64a590ae2
 
 export async function POST(req: NextRequest) {
   const { date, protein, steps, water, sleep, condition, exercise, memo, weight, mealMemo } = await req.json();
