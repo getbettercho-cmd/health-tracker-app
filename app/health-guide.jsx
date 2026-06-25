@@ -156,9 +156,12 @@ export default function HealthGuide() {
     setSaveStatus("draft");
     const payload = buildPayload(dateLabel + " (임시)");
     try {
-      const result = await callNotion(
-        `Create a page in Notion data source "${NOTION_DS_ID}" with these properties: ${JSON.stringify(payload)}. Return the page URL in page_url field.`
-      );
+      const res = await fetch("/api/notion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, date: payload.날짜, protein: payload.단백질, steps: payload.걸음수, water: payload.수분, sleep: payload.수면, condition: payload.컨디션, exercise: payload.운동, memo: payload.메모, weight: payload.몸무게, mealMemo: payload.식사메모 }),
+      });
+      const result = await res.json();
       if (result.success) {
         setDraftPageUrl(result.page_url || "saved");
         setSaveStatus("saved");
@@ -167,23 +170,17 @@ export default function HealthGuide() {
     } catch { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 2500); }
   };
 
-  // 최종저장 (임시 있으면 업데이트, 없으면 새로 생성)
+  // 최종저장
   const handleSave = async () => {
     setSaveStatus("saving");
     const payload = buildPayload(dateLabel);
     try {
-      let result;
-      if (hasDraft && draftPageUrl && draftPageUrl !== "saved") {
-        // 노션 페이지 업데이트
-        result = await callNotion(
-          `Update the Notion page at URL "${draftPageUrl}" with these properties: ${JSON.stringify(payload)}. Change the 날짜 from "(임시)" to the final date. Return {"success": true}.`
-        );
-      } else {
-        // 새로 생성 또는 같은 날짜 페이지가 있으면 업데이트
-        result = await callNotion(
-          `First search in Notion data source "${NOTION_DS_ID}" for a page where 날짜 equals "${dateLabel}" or "${dateLabel} (임시)". If found, update it with properties: ${JSON.stringify(payload)}. If not found, create a new page with these properties. Return {"success": true}.`
-        );
-      }
+      const res = await fetch("/api/notion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: payload.날짜, protein: payload.단백질, steps: payload.걸음수, water: payload.수분, sleep: payload.수면, condition: payload.컨디션, exercise: payload.운동, memo: payload.메모, weight: payload.몸무게, mealMemo: payload.식사메모 }),
+      });
+      const result = await res.json();
       if (result.success) {
         setRecords(r => ({ ...r, [selectedDate]: { ...payload, protein: estimatedProtein } }));
         setDraftPageUrl(null);

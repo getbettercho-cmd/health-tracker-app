@@ -1,38 +1,39 @@
 import { NextResponse } from "next/server";
 
-const NOTION_DS_ID = "0d76a3f3-f2c8-45a8-a006-bcf64a590ae2";
+const NOTION_DB_ID = "0d76a3f3f2c845a8a006bcf64a590ae2";
 
 export async function GET() {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const token = process.env.NOTION_TOKEN;
+  if (!token) return NextResponse.json([]);
+
+  const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
     method: "POST",
     headers: {
+      "Authorization": `Bearer ${token}`,
+      "Notion-Version": "2022-06-28",
       "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      system: `You are a Notion assistant. Use notion-search to find all pages in data source "collection://${NOTION_DS_ID}".
-
-Return ONLY a JSON array like this (no markdown, no explanation):
-[{"날짜":"6월 23일 (화)","단백질":71,"걸음수":9000,"수분":1.5,"몸무게":null,"컨디션":"좋음 🙂","수면":"23:00 ~ 07:00","운동":"산책","식사메모":"[점심] 닭가슴살","메모":""}]
-
-If no pages found, return [].`,
-      messages: [{ role: "user", content: "Fetch all pages from the 건강관리 기록 Notion database and return as JSON array." }],
-      mcp_servers: [{ type: "url", url: "https://mcp.notion.com/mcp", name: "notion-mcp" }],
-    }),
+    body: JSON.stringify({ page_size: 100, sorts: [{ property: "날짜", direction: "descending" }] }),
   });
 
   const data = await res.json();
-  const text = (data.content || []).map((i: any) => i.text || "").join("");
-  const clean = text.replace(/```json|```/g, "").trim();
-  const jsonStart = clean.indexOf("[");
-  const jsonEnd = clean.lastIndexOf("]");
-  if (jsonStart === -1) return NextResponse.json([]);
-  try {
-    return NextResponse.json(JSON.parse(clean.slice(jsonStart, jsonEnd + 1)));
-  } catch {
-    return NextResponse.json([]);
-  }
+  if (!data.results) return NextResponse.json([]);
+
+  const records = data.results.map((page: any) => {
+    const p = page.properties;
+    return {
+      "날짜": p["날짜"]?.title?.[0]?.text?.content || "",
+      "단백질": p["단백질"]?.number || 0,
+      "걸음수": p["걸음수"]?.number || 0,
+      "수분": p["수분"]?.number || 0,
+      "수면": p["수면"]?.rich_text?.[0]?.text?.content || "",
+      "컨디션": p["컨디션"]?.rich_text?.[0]?.text?.content || "",
+      "운동": p["운동"]?.rich_text?.[0]?.text?.content || "",
+      "메모": p["메모"]?.rich_text?.[0]?.text?.content || "",
+      "식사메모": p["식사메모"]?.rich_text?.[0]?.text?.content || "",
+      "몸무게": p["몸무게"]?.number || null,
+    };
+  });
+
+  return NextResponse.json(records);
 }
