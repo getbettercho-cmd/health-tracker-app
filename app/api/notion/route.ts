@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     "걸음수": { number: steps ? Number(steps) : 0 },
     "수분": { number: water ? Number(water) : 0 },
     "수면": { rich_text: [{ text: { content: sleep || "" } }] },
-    "컨디션": { rich_text: [{ text: { content: condition || "" } }] },
+    "컨디션": condition ? { select: { name: condition } } : { select: null },
     "운동": { rich_text: [{ text: { content: exercise || "" } }] },
     "메모": { rich_text: [{ text: { content: memo || "" } }] },
     "식사메모": { rich_text: [{ text: { content: mealMemo || "" } }] },
