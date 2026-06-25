@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const NOTION_DB_ID = "0d76a3f3-f2c8-45a8-a006-bcf64a590ae2";
+const NOTION_DB_ID = "d4506bcb-0763-4997-8b6e-4c57344eeef6";
 
 export async function GET() {
   const token = process.env.NOTION_TOKEN;

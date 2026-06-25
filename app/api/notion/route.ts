@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const NOTION_DB_ID = "0d76a3f3-f2c8-45a8-a006-bcf64a590ae2";
-// 실제 ID: 0d76a3f3-f2c8-45a8-a006-bcf64a590ae2
+const NOTION_DB_ID = "d4506bcb-0763-4997-8b6e-4c57344eeef6";
 
 export async function POST(req: NextRequest) {
   const { date, protein, steps, water, sleep, condition, exercise, memo, weight, mealMemo } = await req.json();
@@ -9,7 +8,6 @@ export async function POST(req: NextRequest) {
   const token = process.env.NOTION_TOKEN;
   if (!token) return NextResponse.json({ success: false, error: "No token" });
 
-  // 기존 페이지 검색
   const searchRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
     method: "POST",
     headers: {
@@ -18,11 +16,12 @@ export async function POST(req: NextRequest) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      filter: { property: "날짜", rich_text: { equals: date } }
+      filter: { property: "날짜", title: { equals: date } }
     }),
   });
 
   const searchData = await searchRes.json();
+  console.log("Search result:", JSON.stringify(searchData).slice(0, 200));
   const existing = searchData.results?.[0];
 
   const properties: any = {
@@ -31,12 +30,12 @@ export async function POST(req: NextRequest) {
     "걸음수": { number: steps ? Number(steps) : 0 },
     "수분": { number: water ? Number(water) : 0 },
     "수면": { rich_text: [{ text: { content: sleep || "" } }] },
-    "컨디션": condition ? { select: { name: condition } } : { select: null },
     "운동": { rich_text: [{ text: { content: exercise || "" } }] },
     "메모": { rich_text: [{ text: { content: memo || "" } }] },
     "식사메모": { rich_text: [{ text: { content: mealMemo || "" } }] },
   };
 
+  if (condition) properties["컨디션"] = { select: { name: condition } };
   if (weight) properties["몸무게"] = { number: Number(weight) };
 
   let res;
@@ -66,6 +65,7 @@ export async function POST(req: NextRequest) {
   }
 
   const data = await res.json();
+  console.log("Notion page response:", JSON.stringify(data).slice(0, 300));
   if (data.id) return NextResponse.json({ success: true, page_url: data.url });
   return NextResponse.json({ success: false, error: JSON.stringify(data) });
 }
