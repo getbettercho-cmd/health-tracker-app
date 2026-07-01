@@ -13,7 +13,11 @@ export async function GET() {
       "Notion-Version": "2022-06-28",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ page_size: 100, sorts: [{ property: "날짜", direction: "descending" }] }),
+    body: JSON.stringify({
+      page_size: 100,
+      filter: { property: "날짜", title: { does_not_contain: "WEEK_" } },
+      sorts: [{ property: "날짜", direction: "descending" }],
+    }),
   });
 
   const data = await res.json();
@@ -31,9 +35,4 @@ export async function GET() {
       "운동": p["운동"]?.rich_text?.[0]?.text?.content || "",
       "메모": p["메모"]?.rich_text?.[0]?.text?.content || "",
       "식사메모": p["식사메모"]?.rich_text?.[0]?.text?.content || "",
-      "몸무게": p["몸무게"]?.number || null,
-    };
-  });
-
-  return NextResponse.json(records);
-}
+      "몸�

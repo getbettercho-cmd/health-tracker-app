@@ -58,7 +58,10 @@ function estimateProtein(text) {
 }
 
 function toDateInput(d) {
-  return d.toISOString().split("T")[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 function fromDateInput(s) {
   return new Date(s + "T00:00:00");
@@ -73,6 +76,22 @@ function formatKR(d) {
 function isWeekend(dateStr) {
   const d = fromDateInput(dateStr);
   return d.getDay() === 0 || d.getDay() === 6;
+}
+function addDays(dateStr, n) {
+  const d = fromDateInput(dateStr);
+  d.setDate(d.getDate() + n);
+  return toDateInput(d);
+}
+function getWeekStart(dateStr) {
+  const d = fromDateInput(dateStr);
+  const diff = (d.getDay() + 1) % 7;
+  d.setDate(d.getDate() - diff);
+  return toDateInput(d);
+}
+function weekRangeLabel(weekStart) {
+  const start = fromDateInput(weekStart);
+  const end = fromDateInput(addDays(weekStart, 6));
+  return `${start.getMonth() + 1}/${start.getDate()} ~ ${end.getMonth() + 1}/${end.getDate()}`;
 }
 
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
@@ -94,9 +113,11 @@ export default function HealthGuide() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [showWeight, setShowWeight] = useState(false);
   const [records, setRecords] = useState({});
-  const [saveStatus, setSaveStatus] = useState("idle"); // idle | draft | saving | saved | updated | error
+  const [saveStatus, setSaveStatus] = useState("idle");
   const [draftPageUrl, setDraftPageUrl] = useState(null);
-  const [loadStatus, setLoadStatus] = useState("loading"); // loading | done | error
+  const [loadStatus, setLoadStatus] = useState("loading");
+  const [expandedWeek, setExpandedWeek] = useState(null);
+  const [weeklyFeedback, setWeeklyFeedback] = useState({});
 
   useEffect(() => {
     loadFromNotion();
@@ -122,6 +143,37 @@ export default function HealthGuide() {
     } catch {
       setLoadStatus("error");
     }
+  };
+
+  const fetchWeeklyFeedback = async (weekStart, force = false) => {
+    setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "loading" } }));
+    const weekEnd = addDays(weekStart, 6);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(weekStart, i);
+      const r = records[date];
+      const dateLabel = formatKR(fromDateInput(date));
+      days.push(r ? { dateLabel, hasRecord: true, ...r } : { dateLabel, hasRecord: false });
+    }
+    try {
+      const res = await fetch("/api/weekly-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart, weekEnd, days, force }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "done", ...result.feedback } }));
+      } else throw new Error(result.error);
+    } catch {
+      setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "error" } }));
+    }
+  };
+
+  const toggleWeek = (weekStart) => {
+    if (expandedWeek === weekStart) { setExpandedWeek(null); return; }
+    setExpandedWeek(weekStart);
+    if (!weeklyFeedback[weekStart]) fetchWeeklyFeedback(weekStart);
   };
 
   const allMealText = Object.values(form.meals).join(" ");
@@ -151,7 +203,6 @@ export default function HealthGuide() {
     };
   };
 
-  // 임시저장
   const handleDraft = async () => {
     setSaveStatus("draft");
     const payload = buildPayload(dateLabel + " (임시)");
@@ -170,7 +221,6 @@ export default function HealthGuide() {
     } catch { setSaveStatus("error"); setTimeout(() => setSaveStatus("idle"), 2500); }
   };
 
-  // 최종저장
   const handleSave = async () => {
     setSaveStatus("saving");
     const payload = buildPayload(dateLabel);
@@ -278,7 +328,6 @@ export default function HealthGuide() {
 
         {tab === 1 && (
           <div>
-            {/* 날짜 선택 */}
             <div style={{ background: "#fff", borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontSize: 10, color: "#999", marginBottom: 2 }}>기록 날짜</div>
@@ -381,7 +430,6 @@ export default function HealthGuide() {
                 )}
               </div>
 
-              {/* 버튼 두 개 */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
                 <button onClick={handleDraft} disabled={["draft", "saving"].includes(saveStatus)} style={{
                   padding: "14px 0", background: sc.draft.color, color: sc.draft.text,
@@ -428,19 +476,79 @@ export default function HealthGuide() {
                   아직 기록이 없어요<br />
                   <span style={{ fontSize: 12 }}>오늘 기록 탭에서 첫 기록을 남겨봐요 😄</span>
                 </div>
-              ) : Object.entries(records).sort((a, b) => b[0].localeCompare(a[0])).map(([date, r]) => (
-                <div key={date} style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: isWeekend(date) ? "#e53935" : "#888", marginBottom: 8 }}>{formatKR(fromDateInput(date))}</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: r["식사메모"] ? 8 : 0 }}>
-                    {r.protein > 0 && <MiniStat label="단백질" value={`${r.protein}g`} highlight={r.protein >= 74} />}
-                    {r["걸음수"] && <MiniStat label="걸음" value={`${Number(r["걸음수"]).toLocaleString()}보`} warn={Number(r["걸음수"]) > 13000} />}
-                    {r["수분"] && <MiniStat label="물" value={`${r["수분"]}L`} />}
-                    {r["컨디션"] && <MiniStat label="컨디션" value={r["컨디션"]} />}
-                    {r["몸무게"] && <MiniStat label="몸무게" value={`${r["몸무게"]}kg`} />}
-                  </div>
-                  {r["식사메모"] && <div style={{ fontSize: 11, color: "#888", paddingTop: 8, borderTop: "1px solid #f0f0f0", whiteSpace: "pre-line" }}>{r["식사메모"]}</div>}
-                </div>
-              ))}
+              ) : (() => {
+                const weekGroups = {};
+                Object.keys(records).forEach(date => {
+                  const ws = getWeekStart(date);
+                  (weekGroups[ws] = weekGroups[ws] || []).push(date);
+                });
+                const sortedWeeks = Object.keys(weekGroups).sort((a, b) => b.localeCompare(a));
+                return sortedWeeks.map(weekStart => {
+                  const dates = weekGroups[weekStart].sort((a, b) => b.localeCompare(a));
+                  const isOpen = expandedWeek === weekStart;
+                  const fb = weeklyFeedback[weekStart];
+                  return (
+                    <div key={weekStart} style={{ marginBottom: 12 }}>
+                      <button onClick={() => toggleWeek(weekStart)} style={{
+                        width: "100%", textAlign: "left", background: "#fff", border: "none",
+                        borderRadius: 12, padding: "14px 16px", cursor: "pointer",
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                      }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{weekRangeLabel(weekStart)}</div>
+                          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{dates.length}/7일 기록</div>
+                        </div>
+                        <span style={{ color: "#999", fontSize: 11 }}>{isOpen ? "▲" : "▼"}</span>
+                      </button>
+
+                      {isOpen && (
+                        <div style={{ background: "#f0f0f0", borderRadius: 12, padding: 14, marginTop: 6 }}>
+                          {!fb || fb.status === "loading" ? (
+                            <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#aaa" }}>
+                              🐯 이번 주 피드백 만드는 중...
+                            </div>
+                          ) : fb.status === "error" ? (
+                            <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#e53935" }}>
+                              피드백 생성 실패 😢
+                              <div>
+                                <button onClick={() => fetchWeeklyFeedback(weekStart, true)} style={{ marginTop: 6, fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}>
+                                  다시 시도
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ marginBottom: 14 }}>
+                              <FeedbackBlock label="✅ 잘한 점" color="#2e7d32" bg="#f0fdf0" items={fb.good} />
+                              <FeedbackBlock label="🔧 보완하면 좋을 점" color="#f57c00" bg="#fff8e1" items={fb.improve} />
+                              <FeedbackBlock label="⚠️ 당장 수정할 점" color="#c62828" bg="#ffebee" items={fb.urgent} />
+                              <button onClick={() => fetchWeeklyFeedback(weekStart, true)} style={{ marginTop: 2, fontSize: 10, color: "#aaa", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+                                🔄 피드백 다시 생성
+                              </button>
+                            </div>
+                          )}
+
+                          {dates.map(date => {
+                            const r = records[date];
+                            return (
+                              <div key={date} style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginBottom: 10 }}>
+                                <div style={{ fontWeight: 700, fontSize: 13, color: isWeekend(date) ? "#e53935" : "#888", marginBottom: 8 }}>{formatKR(fromDateInput(date))}</div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: r["식사메모"] ? 8 : 0 }}>
+                                  {r.protein > 0 && <MiniStat label="단백질" value={`${r.protein}g`} highlight={r.protein >= 74} />}
+                                  {r["걸음수"] && <MiniStat label="걸음" value={`${Number(r["걸음수"]).toLocaleString()}보`} warn={Number(r["걸음수"]) > 13000} />}
+                                  {r["수분"] && <MiniStat label="물" value={`${r["수분"]}L`} />}
+                                  {r["컨디션"] && <MiniStat label="컨디션" value={r["컨디션"]} />}
+                                  {r["몸무게"] && <MiniStat label="몸무게" value={`${r["몸무게"]}kg`} />}
+                                </div>
+                                {r["식사메모"] && <div style={{ fontSize: 11, color: "#888", paddingTop: 8, borderTop: "1px solid #f0f0f0", whiteSpace: "pre-line" }}>{r["식사메모"]}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </Section>
           </div>
         )}
@@ -454,6 +562,16 @@ function Section({ title, children, titleColor }) {
     <div style={{ marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: titleColor || "#888", letterSpacing: 1, marginBottom: 10, textTransform: "uppercase" }}>{title}</div>
       {children}
+    </div>
+  );
+}
+
+function FeedbackBlock({ label, color, bg, items }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div style={{ background: bg, borderRadius: 10, padding: "10px 14px", marginBottom: 8 }}>
+      <div style={{ fontWeight: 700, fontSize: 12, color, marginBottom: 6 }}>{label}</div>
+      {items.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#444", marginBottom: 3 }}>· {it}</div>)}
     </div>
   );
 }
