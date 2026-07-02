@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 
 const NOTION_DS_ID = "0d76a3f3-f2c8-45a8-a006-bcf64a590ae2";
+const NOTION_DB_ID = "d4506bcb-0763-4997-8b6e-4c57344eeef6";
+const NOTION_URL = `https://notion.so/${NOTION_DB_ID.replace(/-/g, "")}`;
 
 const GUIDE = {
   goals: [
@@ -272,9 +274,15 @@ export default function HealthGuide() {
         <div style={{ fontSize: 11, letterSpacing: 2, color: "#888", marginBottom: 6, textTransform: "uppercase" }}>My Body Project</div>
         <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>건강 관리 🐯</div>
         <div style={{ fontSize: 13, color: "#aaa" }}>목표 걸음 1만보 · 단백질 74~99g/일</div>
-        <div style={{ marginTop: 10, background: "#222", borderRadius: 8, padding: "7px 12px", fontSize: 11, color: "#aaa", display: "flex", alignItems: "center", gap: 6 }}>
+        <a
+          href={NOTION_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ marginTop: 10, background: "#222", borderRadius: 8, padding: "7px 12px", fontSize: 11, color: "#aaa", display: "flex", alignItems: "center", gap: 6, textDecoration: "none", cursor: "pointer" }}
+        >
           <span style={{ color: "#c8f97a" }}>●</span> 노션 🐯 건강관리 기록 DB 연동됨
-        </div>
+          <span style={{ marginLeft: "auto", color: "#c8f97a", fontWeight: 600 }}>노션 열기 →</span>
+        </a>
       </div>
 
       <div style={{ display: "flex", borderBottom: "1px solid #e0e0e0", background: "#fff" }}>
