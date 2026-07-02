@@ -98,6 +98,7 @@ function weekRangeLabel(weekStart) {
 }
 
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
+const EMPTY_WEEKLY_NOTE = { good: "", improve: "", urgent: "" };
 
 const TAB_LIST = ["📋 관리 지침서", "📝 오늘 기록", "📊 기록 히스토리"];
 
@@ -120,7 +121,7 @@ export default function HealthGuide() {
   const [draftPageUrl, setDraftPageUrl] = useState(null);
   const [loadStatus, setLoadStatus] = useState("loading");
   const [expandedWeek, setExpandedWeek] = useState(null);
-  const [weeklyFeedback, setWeeklyFeedback] = useState({});
+  const [weeklyNotes, setWeeklyNotes] = useState({}); // weekStart -> { good, improve, urgent, status }
 
   useEffect(() => {
     loadFromNotion();
@@ -148,35 +149,47 @@ export default function HealthGuide() {
     }
   };
 
-  const fetchWeeklyFeedback = async (weekStart, force = false) => {
-    setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "loading" } }));
-    const weekEnd = addDays(weekStart, 6);
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(weekStart, i);
-      const r = records[date];
-      const dateLabel = formatKR(fromDateInput(date));
-      days.push(r ? { dateLabel, hasRecord: true, ...r } : { dateLabel, hasRecord: false });
+  const loadWeeklyNote = async (weekStart) => {
+    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...EMPTY_WEEKLY_NOTE, status: "loading" } }));
+    try {
+      const res = await fetch(`/api/weekly-feedback?weekStart=${weekStart}`);
+      const result = await res.json();
+      if (result.success) {
+        setWeeklyNotes(f => ({ ...f, [weekStart]: { ...EMPTY_WEEKLY_NOTE, ...result.feedback, status: "idle" } }));
+      } else throw new Error(result.error);
+    } catch {
+      setWeeklyNotes(f => ({ ...f, [weekStart]: { ...EMPTY_WEEKLY_NOTE, status: "idle" } }));
     }
+  };
+
+  const updateWeeklyNoteField = (weekStart, field, value) => {
+    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || EMPTY_WEEKLY_NOTE), [field]: value } }));
+  };
+
+  const saveWeeklyNote = async (weekStart) => {
+    const note = weeklyNotes[weekStart] || EMPTY_WEEKLY_NOTE;
+    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...note, status: "saving" } }));
     try {
       const res = await fetch("/api/weekly-feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weekStart, weekEnd, days, force }),
+        body: JSON.stringify({ weekStart, feedback: { good: note.good, improve: note.improve, urgent: note.urgent } }),
       });
       const result = await res.json();
-      if (result.success) {
-        setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "done", ...result.feedback } }));
-      } else throw new Error(result.error || "알 수 없는 오류");
-    } catch (err) {
-      setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "error", message: err?.message || String(err) } }));
+      if (!result.success) throw new Error(result.error);
+      setWeeklyNotes(f => ({ ...f, [weekStart]: { ...note, status: "saved" } }));
+      setTimeout(() => {
+        setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || note), status: "idle" } }));
+      }, 2000);
+    } catch {
+      setWeeklyNotes(f => ({ ...f, [weekStart]: { ...note, status: "error" } }));
     }
   };
 
   const toggleWeek = (weekStart) => {
     if (expandedWeek === weekStart) { setExpandedWeek(null); return; }
     setExpandedWeek(weekStart);
-    if (!weeklyFeedback[weekStart]) fetchWeeklyFeedback(weekStart);
+    if (!weeklyNotes[weekStart]) loadWeeklyNote(weekStart);
   };
 
   const allMealText = Object.values(form.meals).join(" ");
@@ -489,7 +502,7 @@ export default function HealthGuide() {
                 return sortedWeeks.map(weekStart => {
                   const dates = weekGroups[weekStart].sort((a, b) => b.localeCompare(a));
                   const isOpen = expandedWeek === weekStart;
-                  const fb = weeklyFeedback[weekStart];
+                  const note = weeklyNotes[weekStart];
                   return (
                     <div key={weekStart} style={{ marginBottom: 12 }}>
                       <button onClick={() => toggleWeek(weekStart)} style={{
@@ -506,33 +519,46 @@ export default function HealthGuide() {
 
                       {isOpen && (
                         <div style={{ background: "#f0f0f0", borderRadius: 12, padding: 14, marginTop: 6 }}>
-                          {!fb || fb.status === "loading" ? (
-                            <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#aaa" }}>
-                              🐯 이번 주 피드백 만드는 중...
-                            </div>
-                          ) : fb.status === "error" ? (
-                            <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#e53935" }}>
-                              피드백 생성 실패 😢
-                              {fb.message && <div style={{ marginTop: 6, fontSize: 10, color: "#aaa", wordBreak: "break-word" }}>{fb.message}</div>}
-                              <div>
-                                <button onClick={() => fetchWeeklyFeedback(weekStart, true)} style={{ marginTop: 6, fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}>
-                                  다시 시도
-                                </button>
+                          <div style={{ marginBottom: 14 }}>
+                            {!note || note.status === "loading" ? (
+                              <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#aaa" }}>
+                                불러오는 중...
                               </div>
-                            </div>
-                          ) : (
-                            <div style={{ marginBottom: 14 }}>
-                              <FeedbackBlock label="✅ 잘한 점" color="#2e7d32" bg="#f0fdf0" items={fb.good} />
-                              <FeedbackBlock label="🔧 보완하면 좋을 점" color="#f57c00" bg="#fff8e1" items={fb.improve} />
-                              <FeedbackBlock label="⚠️ 당장 수정할 점" color="#c62828" bg="#ffebee" items={fb.urgent} />
-                              {(!fb.good?.length && !fb.improve?.length && !fb.urgent?.length) && (
-                                <div style={{ fontSize: 11, color: "#aaa", padding: "6px 0" }}>피드백 내용이 비어 있어요. 다시 생성해보세요.</div>
-                              )}
-                              <button onClick={() => fetchWeeklyFeedback(weekStart, true)} style={{ marginTop: 2, fontSize: 10, color: "#aaa", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
-                                🔄 피드백 다시 생성
-                              </button>
-                            </div>
-                          )}
+                            ) : (
+                              <>
+                                <WeeklyNoteField
+                                  label="✅ 잘한 점"
+                                  value={note.good}
+                                  onChange={(v) => updateWeeklyNoteField(weekStart, "good", v)}
+                                  placeholder="이번 주에 잘한 점을 적어보세요"
+                                />
+                                <WeeklyNoteField
+                                  label="🔧 보완하면 좋을 점"
+                                  value={note.improve}
+                                  onChange={(v) => updateWeeklyNoteField(weekStart, "improve", v)}
+                                  placeholder="보완하면 좋을 점을 적어보세요"
+                                />
+                                <WeeklyNoteField
+                                  label="⚠️ 당장 수정할 점"
+                                  value={note.urgent}
+                                  onChange={(v) => updateWeeklyNoteField(weekStart, "urgent", v)}
+                                  placeholder="당장 고쳐야 할 점을 적어보세요"
+                                />
+                                <button
+                                  onClick={() => saveWeeklyNote(weekStart)}
+                                  disabled={note.status === "saving"}
+                                  style={{
+                                    width: "100%", marginTop: 4, padding: "10px 0",
+                                    background: note.status === "saved" ? "#e8f5e9" : note.status === "error" ? "#ffcdd2" : "#1a1a1a",
+                                    color: note.status === "saved" ? "#2e7d32" : note.status === "error" ? "#c62828" : "#c8f97a",
+                                    border: "none", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                                  }}
+                                >
+                                  {note.status === "saving" ? "저장 중..." : note.status === "saved" ? "✅ 저장됨" : note.status === "error" ? "⚠️ 저장 실패, 다시 시도" : "저장"}
+                                </button>
+                              </>
+                            )}
+                          </div>
 
                           {dates.map(date => {
                             const r = records[date];
@@ -573,12 +599,21 @@ function Section({ title, children, titleColor }) {
   );
 }
 
-function FeedbackBlock({ label, color, bg, items }) {
-  if (!items || items.length === 0) return null;
+function WeeklyNoteField({ label, value, onChange, placeholder }) {
   return (
-    <div style={{ background: bg, borderRadius: 10, padding: "10px 14px", marginBottom: 8 }}>
-      <div style={{ fontWeight: 700, fontSize: 12, color, marginBottom: 6 }}>{label}</div>
-      {items.map((it, i) => <div key={i} style={{ fontSize: 12, color: "#444", marginBottom: 3 }}>· {it}</div>)}
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>{label}</div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={2}
+        style={{
+          width: "100%", padding: "10px 12px", border: "1px solid #e0e0e0",
+          borderRadius: 10, fontSize: 13, background: "#fff", outline: "none",
+          boxSizing: "border-box", color: "#1a1a1a", resize: "vertical", fontFamily: "inherit",
+        }}
+      />
     </div>
   );
 }
