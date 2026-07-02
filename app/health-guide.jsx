@@ -551,17 +551,25 @@ export default function HealthGuide() {
 
                           {dates.map(date => {
                             const r = records[date];
+                            const hasNote = r["식사메모"] || r["메모"];
                             return (
                               <div key={date} style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginBottom: 10 }}>
                                 <div style={{ fontWeight: 700, fontSize: 13, color: isWeekend(date) ? "#e53935" : "#888", marginBottom: 8 }}>{formatKR(fromDateInput(date))}</div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: r["식사메모"] ? 8 : 0 }}>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: hasNote ? 8 : 0 }}>
                                   {r.protein > 0 && <MiniStat label="단백질" value={`${r.protein}g`} highlight={r.protein >= 74} />}
                                   {r["걸음수"] && <MiniStat label="걸음" value={`${Number(r["걸음수"]).toLocaleString()}보`} warn={Number(r["걸음수"]) > 13000} />}
                                   {r["수분"] && <MiniStat label="물" value={`${r["수분"]}L`} />}
+                                  {r["수면"] && <MiniStat label="수면" value={r["수면"]} />}
                                   {r["컨디션"] && <MiniStat label="컨디션" value={r["컨디션"]} />}
+                                  {r["운동"] && <MiniStat label="운동" value={r["운동"]} />}
                                   {r["몸무게"] && <MiniStat label="몸무게" value={`${r["몸무게"]}kg`} />}
                                 </div>
-                                {r["식사메모"] && <div style={{ fontSize: 11, color: "#888", paddingTop: 8, borderTop: "1px solid #f0f0f0", whiteSpace: "pre-line" }}>{r["식사메모"]}</div>}
+                                {hasNote && (
+                                  <div style={{ paddingTop: 8, borderTop: "1px solid #f0f0f0" }}>
+                                    {r["식사메모"] && <div style={{ fontSize: 11, color: "#888", whiteSpace: "pre-line" }}>{r["식사메모"]}</div>}
+                                    {r["메모"] && <div style={{ fontSize: 11, color: "#aaa", whiteSpace: "pre-line", marginTop: r["식사메모"] ? 6 : 0 }}>📌 {r["메모"]}</div>}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
