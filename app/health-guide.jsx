@@ -66,12 +66,15 @@ function toDateInput(d) {
 function fromDateInput(s) {
   return new Date(s + "T00:00:00");
 }
+const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 function formatKR(d) {
-  const days = ["일", "월", "화", "수", "목", "금", "토"];
   const month = d.getMonth() + 1;
   const day = d.getDate();
-  const dow = days[d.getDay()];
+  const dow = DAY_NAMES[d.getDay()];
   return `${month}월 ${day}일 (${dow})`;
+}
+function shortDateLabel(d) {
+  return `${d.getMonth() + 1}/${d.getDate()} (${DAY_NAMES[d.getDay()]})`;
 }
 function isWeekend(dateStr) {
   const d = fromDateInput(dateStr);
@@ -91,7 +94,7 @@ function getWeekStart(dateStr) {
 function weekRangeLabel(weekStart) {
   const start = fromDateInput(weekStart);
   const end = fromDateInput(addDays(weekStart, 6));
-  return `${start.getMonth() + 1}/${start.getDate()} ~ ${end.getMonth() + 1}/${end.getDate()}`;
+  return `${shortDateLabel(start)} ~ ${shortDateLabel(end)}`;
 }
 
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
@@ -164,9 +167,9 @@ export default function HealthGuide() {
       const result = await res.json();
       if (result.success) {
         setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "done", ...result.feedback } }));
-      } else throw new Error(result.error);
-    } catch {
-      setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "error" } }));
+      } else throw new Error(result.error || "알 수 없는 오류");
+    } catch (err) {
+      setWeeklyFeedback(f => ({ ...f, [weekStart]: { status: "error", message: err?.message || String(err) } }));
     }
   };
 
@@ -510,6 +513,7 @@ export default function HealthGuide() {
                           ) : fb.status === "error" ? (
                             <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#e53935" }}>
                               피드백 생성 실패 😢
+                              {fb.message && <div style={{ marginTop: 6, fontSize: 10, color: "#aaa", wordBreak: "break-word" }}>{fb.message}</div>}
                               <div>
                                 <button onClick={() => fetchWeeklyFeedback(weekStart, true)} style={{ marginTop: 6, fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}>
                                   다시 시도
@@ -521,6 +525,9 @@ export default function HealthGuide() {
                               <FeedbackBlock label="✅ 잘한 점" color="#2e7d32" bg="#f0fdf0" items={fb.good} />
                               <FeedbackBlock label="🔧 보완하면 좋을 점" color="#f57c00" bg="#fff8e1" items={fb.improve} />
                               <FeedbackBlock label="⚠️ 당장 수정할 점" color="#c62828" bg="#ffebee" items={fb.urgent} />
+                              {(!fb.good?.length && !fb.improve?.length && !fb.urgent?.length) && (
+                                <div style={{ fontSize: 11, color: "#aaa", padding: "6px 0" }}>피드백 내용이 비어 있어요. 다시 생성해보세요.</div>
+                              )}
                               <button onClick={() => fetchWeeklyFeedback(weekStart, true)} style={{ marginTop: 2, fontSize: 10, color: "#aaa", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
                                 🔄 피드백 다시 생성
                               </button>

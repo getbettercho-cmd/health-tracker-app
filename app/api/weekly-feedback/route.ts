@@ -86,10 +86,27 @@ ${dayLines}
       messages: [{ role: "user", content: prompt }],
     }),
   });
+
   const data = await res.json();
-  const text = data.content?.[0]?.text || "{}";
+
+  if (!res.ok || data?.type === "error") {
+    const msg = data?.error?.message || `Claude API 호출 실패 (status ${res.status})`;
+    throw new Error(msg);
+  }
+
+  const text = data.content?.[0]?.text || "";
+  if (!text) throw new Error("Claude 응답이 비어 있어요");
+
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+  if (!jsonMatch) throw new Error("Claude 응답에서 JSON을 찾지 못했어요: " + text.slice(0, 200));
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    throw new Error("Claude 응답 JSON 파싱 실패: " + jsonMatch[0].slice(0, 200));
+  }
+
   return {
     good: parsed.good || [],
     improve: parsed.improve || [],
