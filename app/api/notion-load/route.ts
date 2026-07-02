@@ -31,7 +31,7 @@ export async function GET() {
       "걸음수": p["걸음수"]?.number || 0,
       "수분": p["수분"]?.number || 0,
       "수면": p["수면"]?.rich_text?.[0]?.text?.content || "",
-      "컨디션": p["컨디션"]?.rich_text?.[0]?.text?.content || "",
+      "컨디션": p["컨디션"]?.select?.name || "",
       "운동": p["운동"]?.rich_text?.[0]?.text?.content || "",
       "메모": p["메모"]?.rich_text?.[0]?.text?.content || "",
       "식사메모": p["식사메모"]?.rich_text?.[0]?.text?.content || "",
