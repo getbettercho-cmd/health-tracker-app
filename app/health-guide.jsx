@@ -100,7 +100,7 @@ function weekRangeLabel(weekStart) {
 }
 
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
-const EMPTY_WEEKLY_NOTE = { text: "" };
+const EMPTY_WEEKLY_NOTE = { text: "", editing: true };
 
 const TAB_LIST = ["📋 관리 지침서", "📝 오늘 기록", "📊 기록 히스토리"];
 
@@ -157,15 +157,19 @@ export default function HealthGuide() {
       const res = await fetch(`/api/weekly-feedback?weekStart=${weekStart}`);
       const result = await res.json();
       if (result.success) {
-        setWeeklyNotes(f => ({ ...f, [weekStart]: { text: result.text || "", status: "idle" } }));
+        setWeeklyNotes(f => ({ ...f, [weekStart]: { text: result.text || "", status: "idle", editing: !result.text } }));
       } else throw new Error(result.error);
     } catch {
-      setWeeklyNotes(f => ({ ...f, [weekStart]: { text: "", status: "idle" } }));
+      setWeeklyNotes(f => ({ ...f, [weekStart]: { text: "", status: "idle", editing: true } }));
     }
   };
 
   const updateWeeklyNoteText = (weekStart, value) => {
     setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || EMPTY_WEEKLY_NOTE), text: value } }));
+  };
+
+  const startEditingWeeklyNote = (weekStart) => {
+    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || EMPTY_WEEKLY_NOTE), editing: true } }));
   };
 
   const saveWeeklyNote = async (weekStart) => {
@@ -179,10 +183,10 @@ export default function HealthGuide() {
       });
       const result = await res.json();
       if (!result.success) throw new Error(result.error);
-      setWeeklyNotes(f => ({ ...f, [weekStart]: { ...note, status: "saved" } }));
+      setWeeklyNotes(f => ({ ...f, [weekStart]: { ...note, status: "saved", editing: false } }));
       setTimeout(() => {
         setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || note), status: "idle" } }));
-      }, 2000);
+      }, 1500);
     } catch {
       setWeeklyNotes(f => ({ ...f, [weekStart]: { ...note, status: "error" } }));
     }
@@ -532,7 +536,7 @@ export default function HealthGuide() {
                               <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "#aaa" }}>
                                 불러오는 중...
                               </div>
-                            ) : (
+                            ) : note.editing ? (
                               <>
                                 <WeeklyNoteField
                                   label="🐯 이번 주 총평"
@@ -552,6 +556,25 @@ export default function HealthGuide() {
                                   }}
                                 >
                                   {note.status === "saving" ? "저장 중..." : note.status === "saved" ? "✅ 저장됨" : note.status === "error" ? "⚠️ 저장 실패, 다시 시도" : "저장"}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>🐯 이번 주 총평</div>
+                                <div style={{
+                                  background: "#fff", borderRadius: 10, padding: "12px 14px",
+                                  fontSize: 13, color: "#333", whiteSpace: "pre-line", marginBottom: 8,
+                                }}>
+                                  {note.text}
+                                </div>
+                                <button
+                                  onClick={() => startEditingWeeklyNote(weekStart)}
+                                  style={{
+                                    width: "100%", padding: "10px 0", background: "#fff", color: "#555",
+                                    border: "1px solid #ddd", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                                  }}
+                                >
+                                  ✏️ 수정
                                 </button>
                               </>
                             )}
