@@ -593,7 +593,7 @@ export default function HealthGuide() {
                                   <MiniStat label="수면" value={r["수면"] || "-"} />
                                   <MiniStat label="컨디션" value={r["컨디션"] || "-"} />
                                   <MiniStat label="운동" value={r["운동"] || "-"} />
-                                  <MiniStat label="몸무게" value={`${r["몸무게"] || 0}kg`} />
+                                  <MiniStat label="몸무게" value={r["몸무게"] ? `${r["몸무게"]}kg` : "-"} />
                                 </div>
                                 {hasNote && (
                                   <div style={{ paddingTop: 8, borderTop: "1px solid #f0f0f0" }}>
