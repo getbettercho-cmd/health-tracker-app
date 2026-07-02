@@ -20,10 +20,10 @@ async function findExistingPage(token: string, key: string) {
   return data.results?.[0] || null;
 }
 
-async function saveFeedback(token: string, weekStart: string, existing: any, feedback: any) {
+async function saveNote(token: string, weekStart: string, existing: any, text: string) {
   const properties = {
     "날짜": { title: [{ text: { content: weekCacheKey(weekStart) } }] },
-    "메모": { rich_text: [{ text: { content: JSON.stringify(feedback) } }] },
+    "메모": { rich_text: [{ text: { content: text || "" } }] },
   };
   if (existing) {
     const res = await fetch(`https://api.notion.com/v1/pages/${existing.id}`, {
@@ -58,28 +58,15 @@ export async function GET(req: NextRequest) {
 
   try {
     const existing = await findExistingPage(token, weekCacheKey(weekStart));
-    const raw = existing?.properties?.["메모"]?.rich_text?.[0]?.text?.content;
-    let feedback = { good: "", improve: "", urgent: "" };
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        feedback = {
-          good: parsed.good || "",
-          improve: parsed.improve || "",
-          urgent: parsed.urgent || "",
-        };
-      } catch {
-        // 저장된 값이 없거나 파싱 실패 시 빈 값 유지
-      }
-    }
-    return NextResponse.json({ success: true, feedback });
+    const text = existing?.properties?.["메모"]?.rich_text?.[0]?.text?.content || "";
+    return NextResponse.json({ success: true, text });
   } catch (e: any) {
     return NextResponse.json({ success: false, error: String(e?.message || e) });
   }
 }
 
 export async function POST(req: NextRequest) {
-  const { weekStart, feedback } = await req.json();
+  const { weekStart, text } = await req.json();
   const token = process.env.NOTION_TOKEN;
   if (!token) return NextResponse.json({ success: false, error: "No Notion token" });
   if (!weekStart) return NextResponse.json({ success: false, error: "weekStart 누락" });
@@ -87,7 +74,7 @@ export async function POST(req: NextRequest) {
   try {
     const key = weekCacheKey(weekStart);
     const existing = await findExistingPage(token, key);
-    const result = await saveFeedback(token, weekStart, existing, feedback);
+    const result = await saveNote(token, weekStart, existing, text);
     if (result?.id) return NextResponse.json({ success: true });
     return NextResponse.json({ success: false, error: JSON.stringify(result).slice(0, 300) });
   } catch (e: any) {

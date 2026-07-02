@@ -98,7 +98,7 @@ function weekRangeLabel(weekStart) {
 }
 
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
-const EMPTY_WEEKLY_NOTE = { good: "", improve: "", urgent: "" };
+const EMPTY_WEEKLY_NOTE = { text: "" };
 
 const TAB_LIST = ["📋 관리 지침서", "📝 오늘 기록", "📊 기록 히스토리"];
 
@@ -150,20 +150,20 @@ export default function HealthGuide() {
   };
 
   const loadWeeklyNote = async (weekStart) => {
-    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...EMPTY_WEEKLY_NOTE, status: "loading" } }));
+    setWeeklyNotes(f => ({ ...f, [weekStart]: { text: "", status: "loading" } }));
     try {
       const res = await fetch(`/api/weekly-feedback?weekStart=${weekStart}`);
       const result = await res.json();
       if (result.success) {
-        setWeeklyNotes(f => ({ ...f, [weekStart]: { ...EMPTY_WEEKLY_NOTE, ...result.feedback, status: "idle" } }));
+        setWeeklyNotes(f => ({ ...f, [weekStart]: { text: result.text || "", status: "idle" } }));
       } else throw new Error(result.error);
     } catch {
-      setWeeklyNotes(f => ({ ...f, [weekStart]: { ...EMPTY_WEEKLY_NOTE, status: "idle" } }));
+      setWeeklyNotes(f => ({ ...f, [weekStart]: { text: "", status: "idle" } }));
     }
   };
 
-  const updateWeeklyNoteField = (weekStart, field, value) => {
-    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || EMPTY_WEEKLY_NOTE), [field]: value } }));
+  const updateWeeklyNoteText = (weekStart, value) => {
+    setWeeklyNotes(f => ({ ...f, [weekStart]: { ...(f[weekStart] || EMPTY_WEEKLY_NOTE), text: value } }));
   };
 
   const saveWeeklyNote = async (weekStart) => {
@@ -173,7 +173,7 @@ export default function HealthGuide() {
       const res = await fetch("/api/weekly-feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weekStart, feedback: { good: note.good, improve: note.improve, urgent: note.urgent } }),
+        body: JSON.stringify({ weekStart, text: note.text }),
       });
       const result = await res.json();
       if (!result.success) throw new Error(result.error);
@@ -527,22 +527,11 @@ export default function HealthGuide() {
                             ) : (
                               <>
                                 <WeeklyNoteField
-                                  label="✅ 잘한 점"
-                                  value={note.good}
-                                  onChange={(v) => updateWeeklyNoteField(weekStart, "good", v)}
-                                  placeholder="이번 주에 잘한 점을 적어보세요"
-                                />
-                                <WeeklyNoteField
-                                  label="🔧 보완하면 좋을 점"
-                                  value={note.improve}
-                                  onChange={(v) => updateWeeklyNoteField(weekStart, "improve", v)}
-                                  placeholder="보완하면 좋을 점을 적어보세요"
-                                />
-                                <WeeklyNoteField
-                                  label="⚠️ 당장 수정할 점"
-                                  value={note.urgent}
-                                  onChange={(v) => updateWeeklyNoteField(weekStart, "urgent", v)}
-                                  placeholder="당장 고쳐야 할 점을 적어보세요"
+                                  label="🐯 이번 주 총평"
+                                  value={note.text}
+                                  onChange={(v) => updateWeeklyNoteText(weekStart, v)}
+                                  placeholder="이번 주 총평을 적어보세요 (잘한 점, 보완점, 수정할 점 등)"
+                                  rows={5}
                                 />
                                 <button
                                   onClick={() => saveWeeklyNote(weekStart)}
@@ -599,7 +588,7 @@ function Section({ title, children, titleColor }) {
   );
 }
 
-function WeeklyNoteField({ label, value, onChange, placeholder }) {
+function WeeklyNoteField({ label, value, onChange, placeholder, rows = 4 }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 }}>{label}</div>
@@ -607,7 +596,7 @@ function WeeklyNoteField({ label, value, onChange, placeholder }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        rows={2}
+        rows={rows}
         style={{
           width: "100%", padding: "10px 12px", border: "1px solid #e0e0e0",
           borderRadius: 10, fontSize: 13, background: "#fff", outline: "none",
