@@ -118,6 +118,27 @@ function weekRangeLabel(weekStart) {
   const end = fromDateInput(addDays(weekStart, 6));
   return `${shortDateLabel(start)} ~ ${shortDateLabel(end)}`;
 }
+function getMonthMeta(yearMonth) {
+  const [y, m] = yearMonth.split("-").map(Number);
+  const firstDay = new Date(y, m - 1, 1);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const startDow = firstDay.getDay();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+  }
+  return cells;
+}
+function addMonths(yearMonth, n) {
+  const [y, m] = yearMonth.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabel(yearMonth) {
+  const [y, m] = yearMonth.split("-").map(Number);
+  return `${y}년 ${m}월`;
+}
 
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
 const EMPTY_WEEKLY_NOTE = { text: "", editing: true };
@@ -144,6 +165,7 @@ export default function HealthGuide() {
   const [loadStatus, setLoadStatus] = useState("loading");
   const [expandedWeek, setExpandedWeek] = useState(null);
   const [weeklyNotes, setWeeklyNotes] = useState({}); // weekStart -> { text, status, editing }
+  const [calendarMonth, setCalendarMonth] = useState(() => toDateInput(new Date()).slice(0, 7));
 
   useEffect(() => {
     loadFromNotion();
@@ -292,6 +314,12 @@ export default function HealthGuide() {
   };
   const sc = statusConfig[saveStatus] || statusConfig.idle;
 
+  const weekGroups = {};
+  Object.keys(records).forEach(date => {
+    const ws = getWeekStart(date);
+    (weekGroups[ws] = weekGroups[ws] || []).push(date);
+  });
+
   return (
     <div style={{ fontFamily: "'Pretendard','Apple SD Gothic Neo',sans-serif", background: C.bg, minHeight: "100vh", color: C.text }}>
       <div style={{ background: "linear-gradient(180deg, #131316 0%, #0a0a0c 100%)", color: C.text, padding: "28px 20px 22px", borderBottom: `1px solid ${C.border}` }}>
@@ -327,13 +355,19 @@ export default function HealthGuide() {
         {tab === 0 && (
           <div>
             <Section title="나의 목표">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {GUIDE.goals.map((g, i) => (
-                  <div key={i} style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px", gridColumn: i === 2 ? "1 / -1" : "auto" }}>
-                    <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{g.label}</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{g.value}</div>
-                  </div>
-                ))}
+              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 10, marginBottom: 4 }}>
+                <div style={{ background: C.gradient, borderRadius: 22, padding: "18px 18px", color: "#0a0a0c", gridRow: "span 2", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div style={{ fontSize: 11, opacity: 0.65 }}>{GUIDE.goals[0].label}</div>
+                  <div style={{ fontSize: 30, fontWeight: 800, marginTop: 10 }}>{GUIDE.goals[0].value}</div>
+                </div>
+                <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{GUIDE.goals[1].label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{GUIDE.goals[1].value}</div>
+                </div>
+                <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{GUIDE.goals[2].label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{GUIDE.goals[2].value}</div>
+                </div>
               </div>
             </Section>
 
@@ -524,117 +558,145 @@ export default function HealthGuide() {
                   불러오기 실패 😢<br />
                   <span style={{ fontSize: 11, color: C.textMuted }}>새로고침 버튼을 눌러봐요</span>
                 </div>
-              ) : Object.keys(records).length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 }}>
-                  아직 기록이 없어요<br />
-                  <span style={{ fontSize: 12 }}>오늘 기록 탭에서 첫 기록을 남겨봐요 😄</span>
-                </div>
-              ) : (() => {
-                const weekGroups = {};
-                Object.keys(records).forEach(date => {
-                  const ws = getWeekStart(date);
-                  (weekGroups[ws] = weekGroups[ws] || []).push(date);
-                });
-                const sortedWeeks = Object.keys(weekGroups).sort((a, b) => b.localeCompare(a));
-                return sortedWeeks.map(weekStart => {
-                  const dates = weekGroups[weekStart].sort((a, b) => b.localeCompare(a));
-                  const isOpen = expandedWeek === weekStart;
-                  const note = weeklyNotes[weekStart];
-                  return (
-                    <div key={weekStart} style={{ marginBottom: 12 }}>
-                      <button onClick={() => toggleWeek(weekStart)} style={{
-                        width: "100%", textAlign: "left", background: C.card, border: `1px solid ${C.borderSoft}`,
-                        borderRadius: 20, padding: "16px 18px", cursor: "pointer",
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                      }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{weekRangeLabel(weekStart)}</div>
-                          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{dates.length}/7일 기록</div>
-                        </div>
-                        <span style={{ color: C.lime, fontSize: 11 }}>{isOpen ? "▲" : "▼"}</span>
-                      </button>
-
-                      {isOpen && (
-                        <div style={{ background: C.cardAlt, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: 16, marginTop: 6 }}>
-                          <div style={{ marginBottom: 14 }}>
-                            {!note || note.status === "loading" ? (
-                              <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: C.textMuted }}>
-                                불러오는 중...
-                              </div>
-                            ) : note.editing ? (
-                              <>
-                                <WeeklyNoteField
-                                  label="🐯 이번 주 총평"
-                                  value={note.text}
-                                  onChange={(v) => updateWeeklyNoteText(weekStart, v)}
-                                  placeholder="이번 주 총평을 적어보세요 (잘한 점, 보완점, 수정할 점 등)"
-                                  rows={5}
-                                />
-                                <button
-                                  onClick={() => saveWeeklyNote(weekStart)}
-                                  disabled={note.status === "saving"}
-                                  style={{
-                                    width: "100%", marginTop: 4, padding: "11px 0",
-                                    background: note.status === "saved" ? C.limeDim : note.status === "error" ? C.redDim : C.gradient,
-                                    color: note.status === "saved" ? C.lime : note.status === "error" ? C.red : "#0a0a0c",
-                                    border: "none", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer",
-                                  }}
-                                >
-                                  {note.status === "saving" ? "저장 중..." : note.status === "saved" ? "✅ 저장됨" : note.status === "error" ? "⚠️ 저장 실패, 다시 시도" : "저장"}
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>🐯 이번 주 총평</div>
-                                <div style={{
-                                  background: C.card, borderLeft: `3px solid ${C.lime}`, borderRadius: 14, padding: "12px 14px",
-                                  fontSize: 13, color: C.text, whiteSpace: "pre-line", marginBottom: 8,
-                                }}>
-                                  {note.text}
-                                </div>
-                                <button
-                                  onClick={() => startEditingWeeklyNote(weekStart)}
-                                  style={{
-                                    width: "100%", padding: "10px 0", background: "transparent", color: C.textDim,
-                                    border: `1px solid ${C.border}`, borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer",
-                                  }}
-                                >
-                                  ✏️ 수정
-                                </button>
-                              </>
-                            )}
-                          </div>
-
-                          {dates.map(date => {
-                            const r = records[date];
-                            const hasNote = r["식사메모"] || r["메모"];
-                            return (
-                              <div key={date} style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px", marginBottom: 10 }}>
-                                <div style={{ fontWeight: 700, fontSize: 13, color: isWeekend(date) ? C.red : C.textDim, marginBottom: 8 }}>{formatKR(fromDateInput(date))}</div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: hasNote ? 8 : 0 }}>
-                                  <MiniStat label="단백질" value={`${r.protein || 0}g`} highlight={(r.protein || 0) >= 74} />
-                                  <MiniStat label="걸음" value={`${Number(r["걸음수"] || 0).toLocaleString()}보`} warn={Number(r["걸음수"] || 0) > 13000} />
-                                  <MiniStat label="물" value={`${r["수분"] || 0}L`} />
-                                  <MiniStat label="수면" value={r["수면"] || "-"} />
-                                  <MiniStat label="컨디션" value={r["컨디션"] || "-"} />
-                                  <MiniStat label="운동" value={r["운동"] || "-"} />
-                                  <MiniStat label="몸무게" value={r["몸무게"] ? `${r["몸무게"]}kg` : "-"} />
-                                </div>
-                                {hasNote && (
-                                  <div style={{ paddingTop: 8, borderTop: `1px solid ${C.borderSoft}` }}>
-                                    {r["식사메모"] && <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "pre-line" }}>{r["식사메모"]}</div>}
-                                    {r["메모"] && <div style={{ fontSize: 11, color: C.textMuted, whiteSpace: "pre-line", marginTop: r["식사메모"] ? 6 : 0 }}>📌 {r["메모"]}</div>}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+              ) : (
+                <>
+                  <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 22, padding: "18px 16px", marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                      <button onClick={() => setCalendarMonth(m => addMonths(m, -1))} style={calNavBtnStyle}>◀</button>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{monthLabel(calendarMonth)}</div>
+                      <button onClick={() => setCalendarMonth(m => addMonths(m, 1))} style={calNavBtnStyle}>▶</button>
                     </div>
-                  );
-                });
-              })()}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, marginBottom: 8 }}>
+                      {DAY_NAMES.map(d => (
+                        <div key={d} style={{ textAlign: "center", fontSize: 10, color: C.textMuted }}>{d}</div>
+                      ))}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
+                      {getMonthMeta(calendarMonth).map((date, i) => {
+                        if (!date) return <div key={`blank-${i}`} />;
+                        const hasRecord = !!records[date];
+                        const isToday = date === toDateInput(new Date());
+                        const isInExpandedWeek = expandedWeek && getWeekStart(date) === expandedWeek;
+                        const dayNum = Number(date.slice(8, 10));
+                        return (
+                          <button
+                            key={date}
+                            onClick={() => toggleWeek(getWeekStart(date))}
+                            style={{
+                              aspectRatio: "1", borderRadius: "50%",
+                              border: isToday ? `2px solid ${C.lime}` : isInExpandedWeek ? `1px solid ${C.lime}` : "1px solid transparent",
+                              background: hasRecord ? C.gradient : C.cardAlt,
+                              color: hasRecord ? "#0a0a0c" : C.textMuted,
+                              fontSize: 11, fontWeight: hasRecord ? 700 : 500, cursor: "pointer",
+                              display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+                            }}
+                          >
+                            {dayNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {Object.keys(records).length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 }}>
+                      아직 기록이 없어요<br />
+                      <span style={{ fontSize: 12 }}>오늘 기록 탭에서 첫 기록을 남겨봐요 😄</span>
+                    </div>
+                  ) : !expandedWeek ? (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: C.textMuted, fontSize: 12 }}>
+                      달력에서 라임색으로 표시된 날짜를 눌러보세요
+                    </div>
+                  ) : (() => {
+                    const dates = (weekGroups[expandedWeek] || []).sort((a, b) => b.localeCompare(a));
+                    const note = weeklyNotes[expandedWeek];
+                    return (
+                      <div style={{ background: C.cardAlt, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: 16 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: C.text, marginBottom: 12 }}>{weekRangeLabel(expandedWeek)}</div>
+                        <div style={{ marginBottom: 14 }}>
+                          {!note || note.status === "loading" ? (
+                            <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: C.textMuted }}>
+                              불러오는 중...
+                            </div>
+                          ) : note.editing ? (
+                            <>
+                              <WeeklyNoteField
+                                label="🐯 이번 주 총평"
+                                value={note.text}
+                                onChange={(v) => updateWeeklyNoteText(expandedWeek, v)}
+                                placeholder="이번 주 총평을 적어보세요 (잘한 점, 보완점, 수정할 점 등)"
+                                rows={5}
+                              />
+                              <button
+                                onClick={() => saveWeeklyNote(expandedWeek)}
+                                disabled={note.status === "saving"}
+                                style={{
+                                  width: "100%", marginTop: 4, padding: "11px 0",
+                                  background: note.status === "saved" ? C.limeDim : note.status === "error" ? C.redDim : C.gradient,
+                                  color: note.status === "saved" ? C.lime : note.status === "error" ? C.red : "#0a0a0c",
+                                  border: "none", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                                }}
+                              >
+                                {note.status === "saving" ? "저장 중..." : note.status === "saved" ? "✅ 저장됨" : note.status === "error" ? "⚠️ 저장 실패, 다시 시도" : "저장"}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>🐯 이번 주 총평</div>
+                              <div style={{
+                                background: C.card, borderLeft: `3px solid ${C.lime}`, borderRadius: 14, padding: "12px 14px",
+                                fontSize: 13, color: C.text, whiteSpace: "pre-line", marginBottom: 8,
+                              }}>
+                                {note.text}
+                              </div>
+                              <button
+                                onClick={() => startEditingWeeklyNote(expandedWeek)}
+                                style={{
+                                  width: "100%", padding: "10px 0", background: "transparent", color: C.textDim,
+                                  border: `1px solid ${C.border}`, borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                                }}
+                              >
+                                ✏️ 수정
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {dates.length === 0 ? (
+                          <div style={{ textAlign: "center", padding: "16px 0", color: C.textMuted, fontSize: 12 }}>
+                            이 주는 기록이 없어요
+                          </div>
+                        ) : dates.map(date => {
+                          const r = records[date];
+                          const hasNote = r["식사메모"] || r["메모"];
+                          return (
+                            <div key={date} style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px", marginBottom: 10 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: isWeekend(date) ? C.red : C.textDim, marginBottom: 8 }}>{formatKR(fromDateInput(date))}</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: hasNote ? 8 : 0 }}>
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                  <MiniStat label="단백질" value={`${r.protein || 0}g`} highlight={(r.protein || 0) >= 74} big />
+                                </div>
+                                <MiniStat label="걸음" value={`${Number(r["걸음수"] || 0).toLocaleString()}보`} warn={Number(r["걸음수"] || 0) > 13000} />
+                                <MiniStat label="물" value={`${r["수분"] || 0}L`} />
+                                <MiniStat label="수면" value={r["수면"] || "-"} />
+                                <MiniStat label="컨디션" value={r["컨디션"] || "-"} />
+                                <MiniStat label="운동" value={r["운동"] || "-"} />
+                                <MiniStat label="몸무게" value={r["몸무게"] ? `${r["몸무게"]}kg` : "-"} />
+                              </div>
+                              {hasNote && (
+                                <div style={{ paddingTop: 8, borderTop: `1px solid ${C.borderSoft}` }}>
+                                  {r["식사메모"] && <div style={{ fontSize: 11, color: C.textDim, whiteSpace: "pre-line" }}>{r["식사메모"]}</div>}
+                                  {r["메모"] && <div style={{ fontSize: 11, color: C.textMuted, whiteSpace: "pre-line", marginTop: r["식사메모"] ? 6 : 0 }}>📌 {r["메모"]}</div>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
             </Section>
           </div>
         )}
@@ -671,16 +733,22 @@ function WeeklyNoteField({ label, value, onChange, placeholder, rows = 4 }) {
   );
 }
 
-function MiniStat({ label, value, highlight, warn }) {
+function MiniStat({ label, value, highlight, warn, big }) {
   const bg = warn ? C.redDim : highlight ? C.limeDim : C.cardAlt;
   const color = warn ? C.red : highlight ? C.lime : C.text;
   return (
-    <div style={{ background: bg, borderRadius: 14, padding: "8px 12px" }}>
-      <div style={{ fontSize: 10, color: C.textMuted }}>{label}</div>
-      <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
+    <div style={{ background: bg, borderRadius: big ? 16 : 14, padding: big ? "12px 14px" : "8px 12px", display: big ? "flex" : "block", justifyContent: big ? "space-between" : undefined, alignItems: big ? "center" : undefined }}>
+      <div style={{ fontSize: big ? 11 : 10, color: C.textMuted }}>{label}</div>
+      <div style={{ fontSize: big ? 18 : 13, fontWeight: 700, color }}>{value}</div>
     </div>
   );
 }
+
+const calNavBtnStyle = {
+  width: 28, height: 28, borderRadius: "50%", border: "none",
+  background: C.cardAlt, color: C.textDim, fontSize: 11, cursor: "pointer",
+  display: "flex", alignItems: "center", justifyContent: "center",
+};
 
 const inputStyle = {
   width: "100%", padding: "12px 16px", border: `1px solid ${C.border}`,
