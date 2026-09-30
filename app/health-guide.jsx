@@ -187,7 +187,8 @@ function parseMealText(text, foods) {
 }
 const EMPTY_WEEKLY_NOTE = { text: "", editing: true };
 
-const TAB_LIST = ["📝 오늘 기록", "📊 기록 히스토리", "🍚 음식 목록"];
+const TAB_LIST = ["📊 기록 히스토리", "📝 오늘 기록", "🍚 음식 목록"];
+const DEFAULT_TAB = 1; // 앱을 열면 "오늘 기록"이 먼저 보이도록
 
 async function callNotion(prompt) {
   const res = await fetch("/api/notion", {
@@ -199,7 +200,7 @@ async function callNotion(prompt) {
 }
 
 export default function HealthGuide() {
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState(DEFAULT_TAB);
   const [selectedDate, setSelectedDate] = useState(toDateInput(new Date()));
   const [form, setForm] = useState(EMPTY_FORM);
   const [showWeight, setShowWeight] = useState(false);
@@ -478,7 +479,7 @@ export default function HealthGuide() {
 
       <div style={{ padding: "20px 16px", maxWidth: 480, margin: "0 auto" }}>
 
-        {tab === 0 && (
+        {tab === 1 && (
           <div>
             <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
@@ -611,7 +612,7 @@ export default function HealthGuide() {
           </div>
         )}
 
-        {tab === 1 && (
+        {tab === 0 && (
           <div>
             <Section title={`기록 히스토리 (${Object.keys(records).length}일)`}>
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
