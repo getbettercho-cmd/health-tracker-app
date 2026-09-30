@@ -25,57 +25,68 @@ const C = {
   orangeDim: "rgba(255,184,77,0.14)",
 };
 
-const GUIDE = {
-  goals: [
-    { label: "일일 걸음 목표", value: "1만보" },
-    { label: "걸음 상한선", value: "13,000보" },
-    { label: "일일 단백질 목표", value: "74~99g (하루 전체)" },
-  ],
-  diet: [
-    { rule: "단백질 우선", detail: "매 끼니 단백질 먼저 먹기. 목표 74~99g/일 (하루 합산)", examples: ["닭가슴살", "틸라피아", "두부", "소고기", "돼지고기", "달걀", "그릭요거트", "모짜렐라치즈"] },
-    { rule: "탄수화물 조절", detail: "현미밥 작은 공기 or 고구마 1개 or 식빵 1장 중 하루 1회", examples: ["현미밥 소", "고구마 1개", "식빵 1장"] },
-    { rule: "채소 충분히", detail: "변비 예방. 식이섬유 확보 필수", examples: ["양배추", "양상추", "오이", "방울토마토", "브로콜리"] },
-    { rule: "보충제", detail: "종합비타민 + 오메가3 매일. 잠 안 오거나 경련 시 마그네슘 추가", examples: ["종합비타민", "오메가3", "마그네슘 (선택)"] },
-    { rule: "단백질 쉐이크 비상용", detail: "못 먹겠는 날 차갑게 마시기. WPI 분리유청 권장", examples: ["WPI 분리유청", "당 1g 이하"] },
-  ],
-  exercise: [
-    { day: "평일", plan: "출퇴근 걷기 기본 7천보 → 1만보 채우기", note: "아침저녁 스트레칭 5~10분" },
-    { day: "주말", plan: "오전 뒷산 1시간 + 오후 호수공원 한 바퀴", note: "13,000보 넘으면 그 전에 마무리" },
-  ],
-  rules: [
-    "하루 1만보 기준, 13,000보 넘지 않기",
-    "고강도 운동 금지 (코르티솔 ↑ = 지방 붙잡음)",
-    "수면 규칙적으로 — 같은 시간 자고 일어나기",
-    "물 1.5~2L 이상 매일",
-    "음주 최소화",
-    "못 먹겠는 날은 쉐이크로 대체, 억지로 먹지 않기",
-  ],
-};
-
 function estimateProtein(text) {
   if (!text) return 0;
   let total = 0;
+  let meatCounted = false; // 특정 육류 규칙이 이미 단백질을 더했는지 추적 (일반 "고기" 폴백과 중복 방지용)
   const lower = text.toLowerCase();
+
   if (lower.includes("닭가슴살")) {
-    const m = text.match(/(\d+)\s*덩어리/);
-    total += (m ? parseInt(m[1]) : 1) * (lower.includes("손바닥") ? 150 : 200) * 0.23;
+    // "닭가슴살" 뒤에 오는 숫자를 통째로 text.match 하면 문장 어딘가의 다른 음식 개수
+    // (예: "닭가슴살, 계란2개"의 "2개")를 잘못 집어오는 버그가 있었음.
+    // 콤마/줄바꿈으로 구분된 같은 항목(segment) 안에서만 숫자를 찾도록 제한.
+    const segments = text.split(/[,\n]/);
+    const seg = segments.find((s) => s.toLowerCase().includes("닭가슴살")) || "";
+    const near = seg.match(/(\d+)\s*(덩어리|조각|개)?/);
+    const qty = near ? parseInt(near[1]) : 1;
+    const unit = near ? near[2] : null;
+    // "덩어리"(또는 단위 없이 뭉텅이로 언급)는 한 덩이 기준(손바닥 크기면 150g, 아니면 200g),
+    // "조각"/"개"는 소포장 제품 1개 기준(약 100g)으로 더 작게 잡음.
+    const perUnit = unit === "조각" || unit === "개" ? 100 : lower.includes("손바닥") ? 150 : 200;
+    // "6조각"처럼 개수가 크게 적히면 실제로는 한 덩이를 잘게 썬 것일 가능성이 높음 —
+    // 한 끼에 300g(약 69g 단백질) 이상은 비현실적이라 상한을 둠.
+    const grams = Math.min(qty * perUnit, 300);
+    total += grams * 0.23;
+    meatCounted = true;
   }
   const egg = text.match(/계란\s*(\d+)개|달걀\s*(\d+)개/);
   if (egg) total += parseInt(egg[1] || egg[2]) * 6.5;
   const sg = text.match(/삼겹살\s*(\d+)줄/);
-  if (sg) total += parseInt(sg[1]) * 50 * 0.17;
+  if (sg) { total += parseInt(sg[1]) * 50 * 0.17; meatCounted = true; }
   const al = text.match(/앞다리살\s*(\d+)근|앞다리\s*(\d+)근/);
-  if (al) total += parseInt(al[1] || al[2]) * 600 * 0.18;
+  if (al) { total += parseInt(al[1] || al[2]) * 600 * 0.18; meatCounted = true; }
   if (lower.includes("두부")) total += lower.includes("반모") ? 150 * 0.07 : 300 * 0.07;
-  if (lower.includes("생선") || lower.includes("틸라피아") || lower.includes("고등어") || lower.includes("연어")) total += 100 * 0.20;
+  if (lower.includes("생선") || lower.includes("틸라피아") || lower.includes("고등어") || lower.includes("연어") || lower.includes("참치") || lower.includes("새우") || lower.includes("오징어") || lower.includes("낙지") || lower.includes("문어")) {
+    total += 100 * 0.20;
+    meatCounted = true;
+  }
+  if (lower.includes("잠봉") || lower.includes("베이컨") || lower.includes("소시지") || lower.includes("햄")) {
+    total += 30 * 0.18; // 슬라이스 몇 장 기준(샌드위치 등), 통고기보다 적게 잡음
+    meatCounted = true;
+  }
   if (lower.includes("그릭요거트") || lower.includes("그릭")) total += 150 * 0.10;
   if (lower.includes("모짜렐라") || lower.includes("치즈")) total += 30 * 0.22;
   if (lower.includes("쉐이크") || lower.includes("프로틴")) total += 25;
+  if (lower.includes("두유")) total += 190 * 0.035;
   if (lower.includes("땅콩버터")) {
     const m = text.match(/땅콩버터\s*(\d+)g/);
     total += (m ? parseInt(m[1]) : 20) * 0.25;
   }
-  if (lower.includes("고기") && !lower.includes("닭") && !lower.includes("삼겹") && !lower.includes("앞다리")) total += 100 * 0.18;
+
+  // 위에서 아직 못 잡은 육류 표현(소고기/돼지고기/닭고기/삼계탕/육회/갈비/불고기 등) 처리.
+  // 기존 코드는 "닭"/"삼겹"/"앞다리" 글자가 하나라도 있으면 이 블록 전체를 건너뛰어서
+  // "삼계탕(닭고기만)"처럼 닭가슴살 표현이 아닌 닭고기 요리는 단백질이 0으로 잡히던 버그가 있었음.
+  if (!meatCounted) {
+    const genericMeatWords = ["소고기", "돼지고기", "닭고기", "삼계탕", "육회", "갈비", "불고기", "수구레", "오리", "제육", "항정살", "목살", "등심", "안심", "우삼겹", "닭갈비", "닭볶음탕"];
+    if (genericMeatWords.some((w) => lower.includes(w))) {
+      total += 100 * 0.20;
+      meatCounted = true;
+    } else if (lower.includes("고기")) {
+      total += 100 * 0.18;
+      meatCounted = true;
+    }
+  }
+
   return Math.round(total);
 }
 
@@ -143,7 +154,7 @@ function monthLabel(yearMonth) {
 const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
 const EMPTY_WEEKLY_NOTE = { text: "", editing: true };
 
-const TAB_LIST = ["📋 관리 지침서", "📝 오늘 기록", "📊 기록 히스토리"];
+const TAB_LIST = ["📝 오늘 기록", "📊 기록 히스토리"];
 
 async function callNotion(prompt) {
   const res = await fetch("/api/notion", {
@@ -162,6 +173,7 @@ export default function HealthGuide() {
   const [records, setRecords] = useState({});
   const [saveStatus, setSaveStatus] = useState("idle");
   const [draftPageUrl, setDraftPageUrl] = useState(null);
+  const [pendingDraft, setPendingDraft] = useState(null); // 노션에서 찾은 임시저장본 (불러오기 전)
   const [loadStatus, setLoadStatus] = useState("loading");
   const [expandedWeek, setExpandedWeek] = useState(null);
   const [weeklyNotes, setWeeklyNotes] = useState({}); // weekStart -> { text, status, editing }
@@ -170,6 +182,43 @@ export default function HealthGuide() {
   useEffect(() => {
     loadFromNotion();
   }, []);
+
+  // 선택한 날짜에 노션 임시저장본이 있는지 확인
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const title = formatKR(fromDateInput(selectedDate)) + " (임시)";
+        const res = await fetch(`/api/notion-draft?date=${encodeURIComponent(title)}`);
+        const result = await res.json();
+        if (!cancelled && result.success && result.found) setPendingDraft(result);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate]);
+
+  const restoreDraft = () => {
+    if (!pendingDraft) return;
+    const d = pendingDraft.draft;
+    const meals = { ...EMPTY_FORM.meals };
+    (d.mealMemo || "").split("\n").forEach((line) => {
+      const m = line.match(/^\[(아침|점심|간식|저녁|기타)\]\s?(.*)$/);
+      if (m) meals[m[1]] = m[2];
+    });
+    setForm({
+      meals,
+      steps: d.steps ? String(d.steps) : "",
+      water: d.water ? String(d.water) : "",
+      sleep: d.sleep || "",
+      condition: d.condition || "",
+      exercise: d.exercise || "",
+      memo: d.memo || "",
+      weight: d.weight ? String(d.weight) : "",
+    });
+    setShowWeight(!!d.weight);
+    setDraftPageUrl("saved");
+    setPendingDraft(null);
+  };
 
   const loadFromNotion = async () => {
     setLoadStatus("loading");
@@ -298,6 +347,8 @@ export default function HealthGuide() {
       if (result.success) {
         setRecords(r => ({ ...r, [selectedDate]: { ...payload, protein: estimatedProtein } }));
         setDraftPageUrl(null);
+        setPendingDraft(null);
+        fetch(`/api/notion-draft?date=${encodeURIComponent(dateLabel + " (임시)")}`, { method: "DELETE" }).catch(() => {});
         setSaveStatus("updated");
         setTimeout(() => { setSaveStatus("idle"); }, 2500);
       } else throw new Error();
@@ -354,63 +405,6 @@ export default function HealthGuide() {
 
         {tab === 0 && (
           <div>
-            <Section title="나의 목표">
-              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 10, marginBottom: 4 }}>
-                <div style={{ background: C.gradient, borderRadius: 22, padding: "18px 18px", color: "#0a0a0c", gridRow: "span 2", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                  <div style={{ fontSize: 11, opacity: 0.65 }}>{GUIDE.goals[0].label}</div>
-                  <div style={{ fontSize: 30, fontWeight: 800, marginTop: 10 }}>{GUIDE.goals[0].value}</div>
-                </div>
-                <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{GUIDE.goals[1].label}</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{GUIDE.goals[1].value}</div>
-                </div>
-                <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 18, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{GUIDE.goals[2].label}</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{GUIDE.goals[2].value}</div>
-                </div>
-              </div>
-            </Section>
-
-            <Section title="🍽️ 식단 규칙">
-              {GUIDE.diet.map((d, i) => (
-                <div key={i} style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "16px 18px", marginBottom: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: C.text }}>{d.rule}</div>
-                  <div style={{ fontSize: 12, color: C.textDim, marginBottom: 10 }}>{d.detail}</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {d.examples.map((e, j) => <span key={j} style={{ background: C.limeDim, borderRadius: 999, padding: "4px 12px", fontSize: 11, color: C.lime }}>{e}</span>)}
-                  </div>
-                </div>
-              ))}
-            </Section>
-
-            <Section title="🏃 운동 계획">
-              {GUIDE.exercise.map((e, i) => (
-                <div key={i} style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "16px 18px", marginBottom: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: C.textMuted, marginBottom: 4 }}>{e.day}</div>
-                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4, color: C.text }}>{e.plan}</div>
-                  <div style={{ fontSize: 12, color: C.textDim }}>+ {e.note}</div>
-                </div>
-              ))}
-              <div style={{ background: C.orangeDim, borderRadius: 16, padding: "12px 16px", fontSize: 12, color: C.orange }}>
-                ⚠️ 고강도 운동 금지 — 코르티솔 올라가면 지방 꽉 붙잡음
-              </div>
-            </Section>
-
-            <Section title="📌 절대 철칙">
-              <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "6px 18px" }}>
-                {GUIDE.rules.map((r, i) => (
-                  <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: i < GUIDE.rules.length - 1 ? `1px solid ${C.borderSoft}` : "none", fontSize: 13 }}>
-                    <span style={{ color: C.lime, fontWeight: 700, minWidth: 16 }}>{i + 1}</span>
-                    <span style={{ color: C.text }}>{r}</span>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          </div>
-        )}
-
-        {tab === 1 && (
-          <div>
             <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>기록 날짜</div>
@@ -420,10 +414,22 @@ export default function HealthGuide() {
                 type="date"
                 value={selectedDate}
                 max={toDateInput(new Date())}
-                onChange={(e) => { setSelectedDate(e.target.value); setDraftPageUrl(null); setSaveStatus("idle"); }}
+                onChange={(e) => { setSelectedDate(e.target.value); setPendingDraft(null); setDraftPageUrl(null); setSaveStatus("idle"); }}
                 style={{ border: `1px solid ${C.border}`, borderRadius: 999, padding: "7px 14px", fontSize: 13, color: C.text, background: C.cardAlt, cursor: "pointer", colorScheme: "dark" }}
               />
             </div>
+
+            {pendingDraft && (
+              <div style={{ background: C.limeDim, border: `1px solid ${C.lime}`, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontSize: 12, color: C.lime }}>
+                <div style={{ marginBottom: 10 }}>
+                  📝 임시저장된 기록이 있어요{pendingDraft.savedAt ? ` (${new Date(pendingDraft.savedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })} 저장)` : ""}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={restoreDraft} style={{ flex: 2, padding: "10px 0", background: C.gradient, color: "#0a0a0c", border: "none", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>이어서 작성</button>
+                  <button onClick={() => setPendingDraft(null)} style={{ flex: 1, padding: "10px 0", background: C.cardAlt, color: C.textDim, border: "none", borderRadius: 999, fontSize: 13, cursor: "pointer" }}>닫기</button>
+                </div>
+              </div>
+            )}
 
             {hasDraft && (
               <div style={{ background: C.limeDim, borderRadius: 16, padding: "10px 16px", marginBottom: 14, fontSize: 12, color: C.lime, display: "flex", alignItems: "center", gap: 6 }}>
@@ -538,7 +544,7 @@ export default function HealthGuide() {
           </div>
         )}
 
-        {tab === 2 && (
+        {tab === 1 && (
           <div>
             <Section title={`기록 히스토리 (${Object.keys(records).length}일)`}>
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
