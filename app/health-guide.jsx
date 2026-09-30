@@ -152,17 +152,23 @@ function monthLabel(yearMonth) {
 }
 
 // 수면: [오전/오후] 시 : 분 두 묶음 (취침 기본 오후, 기상 기본 오전). 노션에는 "오후 11:30 ~ 오전 7:00" 형태로 저장
-const EMPTY_SLEEP_START = { ap: "오후", h: "", m: "" };
-const EMPTY_SLEEP_END = { ap: "오전", h: "", m: "" };
+// 수면은 여러 구간 가능 (밤잠 + 낮잠 등). 첫 구간은 오후→오전, 추가 구간(낮잠)은 오후→오후가 기본
+const MAX_SLEEPS = 4;
+const makeSleepRow = (startAp = "오후", endAp = "오전") => ({
+  start: { ap: startAp, h: "", m: "" },
+  end: { ap: endAp, h: "", m: "" },
+});
 
 function fmtSleepTime(t) {
   if (!t || t.h === "") return "";
   return `${t.ap} ${parseInt(t.h, 10)}:${String(parseInt(t.m || "0", 10)).padStart(2, "0")}`;
 }
-function serializeSleep(start, end) {
-  const a = fmtSleepTime(start), b = fmtSleepTime(end);
-  if (!a && !b) return null;
-  return `${a} ~ ${b}`.trim();
+function serializeSleep(sleeps) {
+  const parts = (sleeps || []).map((r) => {
+    const x = fmtSleepTime(r.start), y = fmtSleepTime(r.end);
+    return x || y ? `${x} ~ ${y}`.trim() : "";
+  }).filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
 }
 function parseSleepTime(str, defaultAp) {
   const base = { ap: defaultAp, h: "", m: "" };
@@ -174,11 +180,14 @@ function parseSleepTime(str, defaultAp) {
   return base;
 }
 function parseSleep(text) {
-  const [a = "", b = ""] = (text || "").split("~");
-  return [parseSleepTime(a, "오후"), parseSleepTime(b, "오전")];
+  const rows = (text || "").split(",").map((t) => t.trim()).filter(Boolean).slice(0, MAX_SLEEPS).map((t, i) => {
+    const [x = "", y = ""] = t.split("~");
+    return { start: parseSleepTime(x, "오후"), end: parseSleepTime(y, i === 0 ? "오전" : "오후") };
+  });
+  return rows.length ? rows : [makeSleepRow()];
 }
 
-const EMPTY_FORM = { meals: { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" }, steps: "", water: "", sleepStart: EMPTY_SLEEP_START, sleepEnd: EMPTY_SLEEP_END, condition: "", exercise: "", memo: "", weight: "" };
+const EMPTY_FORM = { meals: { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" }, steps: "", water: "", sleeps: [makeSleepRow()], condition: "", exercise: "", memo: "", weight: "" };
 
 // 끼니는 "음식 칩" 배열로 관리 (기타만 자유 텍스트)
 const MEAL_KEYS = ["아침", "점심", "간식", "저녁"];
@@ -309,13 +318,12 @@ export default function HealthGuide() {
       if (m[1] === "기타") meals.기타 = m[2];
       else meals[m[1]] = parseMealText(m[2], foods);
     });
-    const [sleepStart, sleepEnd] = parseSleep(d.sleep);
+    const sleeps = parseSleep(d.sleep);
     setForm({
       meals,
       steps: d.steps ? String(d.steps) : "",
       water: d.water ? String(d.water) : "",
-      sleepStart,
-      sleepEnd,
+      sleeps,
       condition: d.condition || "",
       exercise: d.exercise || "",
       memo: d.memo || "",
@@ -403,6 +411,10 @@ export default function HealthGuide() {
   const isToday = selectedDate === toDateInput(new Date());
   const hasDraft = !!draftPageUrl;
 
+  const patchSleep = (i, side, patch) => setForm((f) => ({ ...f, sleeps: f.sleeps.map((r, idx) => (idx === i ? { ...r, [side]: { ...r[side], ...patch } } : r)) }));
+  const addSleep = () => setForm((f) => (f.sleeps.length >= MAX_SLEEPS ? f : { ...f, sleeps: [...f.sleeps, makeSleepRow("오후", "오후")] }));
+  const removeSleep = (i) => setForm((f) => ({ ...f, sleeps: f.sleeps.filter((_, idx) => idx !== i) }));
+
   const buildPayload = (dateStr) => {
     const mealLines = MEAL_KEYS.filter((k) => form.meals[k].length).map((k) => `[${k}] ${serializeChips(form.meals[k])}`);
     if (form.meals.기타.trim()) mealLines.push(`[기타] ${form.meals.기타.trim()}`);
@@ -413,7 +425,7 @@ export default function HealthGuide() {
       단백질: estimatedProtein || null,
       걸음수: form.steps ? parseFloat(form.steps) : null,
       수분: form.water ? parseFloat(form.water) : null,
-      수면: serializeSleep(form.sleepStart, form.sleepEnd),
+      수면: serializeSleep(form.sleeps),
       컨디션: form.condition || null,
       운동: form.exercise || null,
       메모: form.memo || null,
@@ -580,12 +592,29 @@ export default function HealthGuide() {
               </div>
 
               <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>수면 <span style={{ fontWeight: 400 }}>· 오전/오후를 누르면 바뀌어요</span></div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <SleepTime idPrefix="sleep-start" value={form.sleepStart} onPatch={(patch) => setForm((f) => ({ ...f, sleepStart: { ...f.sleepStart, ...patch } }))} />
-                  <span style={{ color: C.textMuted }}>-</span>
-                  <SleepTime idPrefix="sleep-end" value={form.sleepEnd} onPatch={(patch) => setForm((f) => ({ ...f, sleepEnd: { ...f.sleepEnd, ...patch } }))} />
-                </div>
+                {form.sleeps.map((row, i) => (
+                  <div key={i} style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, minHeight: 18 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted }}>
+                        {i === 0 ? "수면" : `수면 ${i + 1} (낮잠 등)`}
+                        {i === 0 && <span style={{ fontWeight: 400 }}> · 오전/오후를 누르면 바뀌어요</span>}
+                      </div>
+                      {i > 0 && (
+                        <button onClick={() => removeSleep(i)} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 11, cursor: "pointer", padding: "0 4px" }}>삭제 ✕</button>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <SleepTime idPrefix={`sleep-${i}-start`} value={row.start} onPatch={(patch) => patchSleep(i, "start", patch)} />
+                      <span style={{ color: C.textMuted }}>-</span>
+                      <SleepTime idPrefix={`sleep-${i}-end`} value={row.end} onPatch={(patch) => patchSleep(i, "end", patch)} />
+                    </div>
+                  </div>
+                ))}
+                {form.sleeps.length < MAX_SLEEPS && (
+                  <button onClick={addSleep} style={{ width: "100%", padding: "11px", background: "transparent", color: C.textMuted, border: `1px dashed ${C.border}`, borderRadius: 999, fontSize: 13, cursor: "pointer" }}>
+                    + 수면 시간 추가 (낮잠 등)
+                  </button>
+                )}
               </div>
 
               <div style={{ marginBottom: 14 }}>
