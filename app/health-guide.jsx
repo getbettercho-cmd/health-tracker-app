@@ -151,7 +151,34 @@ function monthLabel(yearMonth) {
   return `${y}년 ${m}월`;
 }
 
-const EMPTY_FORM = { meals: { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
+// 수면: [오전/오후] 시 : 분 두 묶음 (취침 기본 오후, 기상 기본 오전). 노션에는 "오후 11:30 ~ 오전 7:00" 형태로 저장
+const EMPTY_SLEEP_START = { ap: "오후", h: "", m: "" };
+const EMPTY_SLEEP_END = { ap: "오전", h: "", m: "" };
+
+function fmtSleepTime(t) {
+  if (!t || t.h === "") return "";
+  return `${t.ap} ${parseInt(t.h, 10)}:${String(parseInt(t.m || "0", 10)).padStart(2, "0")}`;
+}
+function serializeSleep(start, end) {
+  const a = fmtSleepTime(start), b = fmtSleepTime(end);
+  if (!a && !b) return null;
+  return `${a} ~ ${b}`.trim();
+}
+function parseSleepTime(str, defaultAp) {
+  const base = { ap: defaultAp, h: "", m: "" };
+  if (!str) return base;
+  const k = str.match(/(오전|오후)\s*(\d{1,2})\s*:\s*(\d{1,2})/);
+  if (k) return { ap: k[1], h: String(parseInt(k[2], 10)), m: k[3].padStart(2, "0") };
+  const t = str.match(/(\d{1,2})\s*:\s*(\d{2})/); // 예전 기록 "23:00 ~ 07:00" (24시간제)
+  if (t) { const h24 = parseInt(t[1], 10); return { ap: h24 >= 12 ? "오후" : "오전", h: String(h24 % 12 || 12), m: t[2] }; }
+  return base;
+}
+function parseSleep(text) {
+  const [a = "", b = ""] = (text || "").split("~");
+  return [parseSleepTime(a, "오후"), parseSleepTime(b, "오전")];
+}
+
+const EMPTY_FORM = { meals: { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" }, steps: "", water: "", sleepStart: EMPTY_SLEEP_START, sleepEnd: EMPTY_SLEEP_END, condition: "", exercise: "", memo: "", weight: "" };
 
 // 끼니는 "음식 칩" 배열로 관리 (기타만 자유 텍스트)
 const MEAL_KEYS = ["아침", "점심", "간식", "저녁"];
@@ -282,11 +309,13 @@ export default function HealthGuide() {
       if (m[1] === "기타") meals.기타 = m[2];
       else meals[m[1]] = parseMealText(m[2], foods);
     });
+    const [sleepStart, sleepEnd] = parseSleep(d.sleep);
     setForm({
       meals,
       steps: d.steps ? String(d.steps) : "",
       water: d.water ? String(d.water) : "",
-      sleep: d.sleep || "",
+      sleepStart,
+      sleepEnd,
       condition: d.condition || "",
       exercise: d.exercise || "",
       memo: d.memo || "",
@@ -384,7 +413,7 @@ export default function HealthGuide() {
       단백질: estimatedProtein || null,
       걸음수: form.steps ? parseFloat(form.steps) : null,
       수분: form.water ? parseFloat(form.water) : null,
-      수면: form.sleep || null,
+      수면: serializeSleep(form.sleepStart, form.sleepEnd),
       컨디션: form.condition || null,
       운동: form.exercise || null,
       메모: form.memo || null,
@@ -550,18 +579,21 @@ export default function HealthGuide() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>수면</div>
-                  <input type="text" placeholder="23:00 ~ 07:00" value={form.sleep} onChange={(e) => setForm(f => ({ ...f, sleep: e.target.value }))} style={inputStyle} />
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>수면 <span style={{ fontWeight: 400 }}>· 오전/오후를 누르면 바뀌어요</span></div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <SleepTime idPrefix="sleep-start" value={form.sleepStart} onPatch={(patch) => setForm((f) => ({ ...f, sleepStart: { ...f.sleepStart, ...patch } }))} />
+                  <span style={{ color: C.textMuted }}>-</span>
+                  <SleepTime idPrefix="sleep-end" value={form.sleepEnd} onPatch={(patch) => setForm((f) => ({ ...f, sleepEnd: { ...f.sleepEnd, ...patch } }))} />
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>컨디션</div>
-                  <select value={form.condition} onChange={(e) => setForm(f => ({ ...f, condition: e.target.value }))} style={{ ...inputStyle, colorScheme: "dark" }}>
-                    <option value="">선택</option>
-                    {["최고 😄", "좋음 🙂", "보통 😐", "나쁨 😔", "최악 😩"].map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </div>
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>컨디션</div>
+                <select value={form.condition} onChange={(e) => setForm(f => ({ ...f, condition: e.target.value }))} style={{ ...inputStyle, colorScheme: "dark" }}>
+                  <option value="">선택</option>
+                  {["최고 😄", "좋음 🙂", "보통 😐", "나쁨 😔", "최악 😩"].map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
               </div>
 
               <div style={{ marginBottom: 14 }}>
@@ -1103,6 +1135,47 @@ function FoodsTab({ foods, sync, onAdd, onUpdate, onDelete, onToggleFav }) {
       <div style={{ fontSize: 11, color: C.textMuted, textAlign: "center", marginTop: 12, lineHeight: 1.6 }}>
         ★ 표시한 음식은 오늘 기록의 &quot;자주 쓰는 음식&quot;에 바로 보여요
       </div>
+    </div>
+  );
+}
+
+function SleepTime({ value, onPatch, idPrefix }) {
+  const set = (patch) => onPatch(patch); // 부모가 최신 상태에 patch를 합쳐서 반영 (blur 시 이전 값으로 덮어쓰는 문제 방지)
+  const focusMinute = () => document.getElementById(`${idPrefix}-m`)?.focus();
+
+  const onHour = (raw) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 2);
+    set({ h: digits });
+    if (digits.length === 2 || (digits.length === 1 && Number(digits) >= 2)) focusMinute();
+  };
+  const blurHour = (e) => {
+    const raw = e.target.value; // 화면에 입력된 현재 값 기준
+    if (raw === "") return;
+    const n = parseInt(raw, 10);
+    if (n >= 13 && n <= 23) set({ h: String(n - 12), ap: "오후" }); // 24시간제로 입력해도 자동 변환
+    else if (n === 0) set({ h: "12", ap: "오전" });
+    else if (n > 23) set({ h: "12" });
+    else set({ h: String(n) });
+  };
+  const onMinute = (raw) => set({ m: raw.replace(/\D/g, "").slice(0, 2) });
+  const blurMinute = (e) => {
+    const raw = e.target.value;
+    if (raw === "") return;
+    set({ m: String(Math.min(59, parseInt(raw, 10))).padStart(2, "0") });
+  };
+
+  const numStyle = { width: 34, border: "none", background: "transparent", outline: "none", color: C.text, fontSize: 16, textAlign: "center", padding: 0, fontFamily: "inherit" };
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, border: `1px solid ${C.border}`, borderRadius: 999, background: C.cardAlt, padding: "9px 10px" }}>
+      <button
+        type="button"
+        onClick={() => set({ ap: value.ap === "오전" ? "오후" : "오전" })}
+        aria-label={`${value.ap} (눌러서 전환)`}
+        style={{ background: C.card, border: "none", borderRadius: 999, color: C.lime, fontSize: 13, fontWeight: 700, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit" }}
+      >{value.ap}</button>
+      <input id={`${idPrefix}-h`} type="text" inputMode="numeric" placeholder="시" aria-label="시" value={value.h} onChange={(e) => onHour(e.target.value)} onBlur={blurHour} style={numStyle} />
+      <span style={{ color: C.textMuted }}>:</span>
+      <input id={`${idPrefix}-m`} type="text" inputMode="numeric" placeholder="분" aria-label="분" value={value.m} onChange={(e) => onMinute(e.target.value)} onBlur={blurMinute} style={numStyle} />
     </div>
   );
 }
