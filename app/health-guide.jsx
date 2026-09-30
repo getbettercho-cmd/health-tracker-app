@@ -120,7 +120,7 @@ function addDays(dateStr, n) {
 }
 function getWeekStart(dateStr) {
   const d = fromDateInput(dateStr);
-  const diff = (d.getDay() + 1) % 7;
+  const diff = (d.getDay() + 6) % 7; // 월요일 시작 (월~일)
   d.setDate(d.getDate() - diff);
   return toDateInput(d);
 }
