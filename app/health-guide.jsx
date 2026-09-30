@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const NOTION_DS_ID = "0d76a3f3-f2c8-45a8-a006-bcf64a590ae2";
 const NOTION_DB_ID = "d4506bcb-0763-4997-8b6e-4c57344eeef6";
@@ -151,10 +151,43 @@ function monthLabel(yearMonth) {
   return `${y}년 ${m}월`;
 }
 
-const EMPTY_FORM = { meals: { 아침: "", 점심: "", 간식: "", 저녁: "", 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
+const EMPTY_FORM = { meals: { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" }, steps: "", water: "", sleep: "", condition: "", exercise: "", memo: "", weight: "" };
+
+// 끼니는 "음식 칩" 배열로 관리 (기타만 자유 텍스트)
+const MEAL_KEYS = ["아침", "점심", "간식", "저녁"];
+const GOAL_PROTEIN = 74;
+const FOODS_CACHE_KEY = "health-foods-v1";
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+const round1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+const sumProtein = (chips) => (chips || []).reduce((s, c) => s + (Number(c.protein) || 0), 0);
+const sumKcal = (chips) => (chips || []).reduce((s, c) => s + (Number(c.kcal) || 0), 0);
+const cleanName = (s) => s.trim().replace(/,/g, " ").replace(/\s+/g, " ");
+const normName = (s) => s.replace(/\s/g, "").toLowerCase();
+
+function readFoodsCache() {
+  try { const raw = localStorage.getItem(FOODS_CACHE_KEY); const v = raw ? JSON.parse(raw) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function writeFoodsCache(foods) {
+  try { localStorage.setItem(FOODS_CACHE_KEY, JSON.stringify(foods)); } catch {}
+}
+
+// 노션에는 "계란2개 (13g), 닭가슴살 (23g)" 형태로 저장 → 불러올 때 다시 칩으로 복원
+function serializeChips(chips) {
+  return chips.map((c) => `${c.name} (${round1(c.protein)}g)`).join(", ");
+}
+function parseMealText(text, foods) {
+  return text.split(",").map((s) => s.trim()).filter(Boolean).map((part) => {
+    const m = part.match(/^(.*?)\s*\((\d+(?:\.\d+)?)g\)$/);
+    const name = m ? m[1] : part;
+    const food = foods.find((f) => normName(f.name) === normName(name));
+    return { id: uid(), name, protein: m ? parseFloat(m[2]) : food ? food.protein : estimateProtein(part), kcal: food ? food.kcal : 0 };
+  });
+}
 const EMPTY_WEEKLY_NOTE = { text: "", editing: true };
 
-const TAB_LIST = ["📝 오늘 기록", "📊 기록 히스토리"];
+const TAB_LIST = ["📝 오늘 기록", "📊 기록 히스토리", "🍚 음식 목록"];
 
 async function callNotion(prompt) {
   const res = await fetch("/api/notion", {
@@ -178,10 +211,51 @@ export default function HealthGuide() {
   const [expandedWeek, setExpandedWeek] = useState(null);
   const [weeklyNotes, setWeeklyNotes] = useState({}); // weekStart -> { text, status, editing }
   const [calendarMonth, setCalendarMonth] = useState(() => toDateInput(new Date()).slice(0, 7));
+  const [foods, setFoods] = useState(readFoodsCache);
+  const [foodSync, setFoodSync] = useState("idle");
+  const [editingMeal, setEditingMeal] = useState(null);
+  const foodSaveQueue = useRef(Promise.resolve());
 
   useEffect(() => {
     loadFromNotion();
   }, []);
+
+  // 음식 목록: 노션(FOODS_LIST 페이지)에 저장 + 이 기기 localStorage에 캐시
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/foods");
+        const result = await res.json();
+        if (result.success && result.found && Array.isArray(result.foods)) {
+          setFoods(result.foods);
+          writeFoodsCache(result.foods);
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const persistFoods = (next) => {
+    setFoods(next);
+    writeFoodsCache(next);
+    setFoodSync("saving");
+    foodSaveQueue.current = foodSaveQueue.current.then(async () => {
+      try {
+        const res = await fetch("/api/foods", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ foods: next }) });
+        const result = await res.json();
+        if (!result.success) throw new Error();
+        setFoodSync("saved");
+        setTimeout(() => setFoodSync((s) => (s === "saved" ? "idle" : s)), 1500);
+      } catch { setFoodSync("error"); }
+    });
+  };
+  const addFood = (item) => persistFoods([...foods, { id: uid(), fav: false, ...item }]);
+  const updateFood = (id, item) => persistFoods(foods.map((f) => (f.id === id ? { ...f, ...item } : f)));
+  const deleteFood = (id) => persistFoods(foods.filter((f) => f.id !== id));
+  const toggleFav = (id) => persistFoods(foods.map((f) => (f.id === id ? { ...f, fav: !f.fav } : f)));
+  const saveFoodFromMeal = (item) => {
+    if (foods.some((f) => normName(f.name) === normName(item.name))) return;
+    addFood(item);
+  };
 
   // 선택한 날짜에 노션 임시저장본이 있는지 확인
   useEffect(() => {
@@ -200,10 +274,12 @@ export default function HealthGuide() {
   const restoreDraft = () => {
     if (!pendingDraft) return;
     const d = pendingDraft.draft;
-    const meals = { ...EMPTY_FORM.meals };
+    const meals = { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" };
     (d.mealMemo || "").split("\n").forEach((line) => {
       const m = line.match(/^\[(아침|점심|간식|저녁|기타)\]\s?(.*)$/);
-      if (m) meals[m[1]] = m[2];
+      if (!m) return;
+      if (m[1] === "기타") meals.기타 = m[2];
+      else meals[m[1]] = parseMealText(m[2], foods);
     });
     setForm({
       meals,
@@ -289,19 +365,18 @@ export default function HealthGuide() {
     if (!weeklyNotes[weekStart]) loadWeeklyNote(weekStart);
   };
 
-  const allMealText = Object.values(form.meals).join(" ");
-  const estimatedProtein = estimateProtein(allMealText);
+  const mealProteins = MEAL_KEYS.map((k) => sumProtein(form.meals[k]));
+  const etcProtein = estimateProtein(form.meals.기타);
+  const exactProtein = mealProteins.reduce((a, b) => a + b, 0) + etcProtein;
+  const estimatedProtein = Math.round(exactProtein);
   const dateLabel = formatKR(fromDateInput(selectedDate));
   const isToday = selectedDate === toDateInput(new Date());
   const hasDraft = !!draftPageUrl;
 
-  const setMeal = (k, v) => setForm(f => ({ ...f, meals: { ...f.meals, [k]: v } }));
-
   const buildPayload = (dateStr) => {
-    const mealSummary = Object.entries(form.meals)
-      .filter(([, v]) => v.trim())
-      .map(([k, v]) => `[${k}] ${v}`)
-      .join("\n");
+    const mealLines = MEAL_KEYS.filter((k) => form.meals[k].length).map((k) => `[${k}] ${serializeChips(form.meals[k])}`);
+    if (form.meals.기타.trim()) mealLines.push(`[기타] ${form.meals.기타.trim()}`);
+    const mealSummary = mealLines.join("\n");
     return {
       날짜: dateStr,
       식사메모: mealSummary || null,
@@ -438,38 +513,29 @@ export default function HealthGuide() {
             )}
 
             <Section title={`${dateLabel} 식사 기록`} titleColor={isWeekend(selectedDate) ? C.red : undefined}>
-              <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "16px 18px", marginBottom: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: C.text }}>🍽️ 뭐 먹었어?</div>
-                {["아침", "점심", "간식", "저녁", "기타"].map((meal) => (
-                  <div key={meal} style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, marginBottom: 4 }}>{meal}</div>
-                    <input
-                      type="text"
-                      placeholder={
-                        meal === "아침" ? "커피 한 잔 (안 먹으면 비워두기)" :
-                        meal === "점심" ? "닭가슴살, 양배추, 고구마" :
-                        meal === "간식" ? "그릭요거트, 프로틴 쉐이크" :
-                        meal === "저녁" ? "삼겹살 3줄, 양배추" : "기타"
-                      }
-                      value={form.meals[meal]}
-                      onChange={(e) => setMeal(meal, e.target.value)}
-                      style={inputStyle}
-                    />
-                  </div>
-                ))}
-                {estimatedProtein > 0 && (
-                  <div style={{
-                    marginTop: 10,
-                    background: estimatedProtein >= 74 ? C.gradient : C.orangeDim,
-                    borderRadius: 999, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
-                  }}>
-                    <span style={{ fontSize: 12, color: estimatedProtein >= 74 ? "#0a0a0c" : C.orange }}>단백질 추정량</span>
-                    <span style={{ fontWeight: 700, fontSize: 16, color: estimatedProtein >= 74 ? "#0a0a0c" : C.orange }}>
-                      {estimatedProtein}g {estimatedProtein >= 74 ? "✅" : "⚠️ 목표 미달"}
-                    </span>
-                  </div>
-                )}
-              </div>
+              {editingMeal ? (
+                <MealEditor
+                  key={editingMeal}
+                  meal={editingMeal}
+                  chips={form.meals[editingMeal]}
+                  foods={foods}
+                  otherProtein={exactProtein - mealProteins[MEAL_KEYS.indexOf(editingMeal)]}
+                  onChange={(chips) => setForm((f) => ({ ...f, meals: { ...f.meals, [editingMeal]: chips } }))}
+                  onDone={() => setEditingMeal(null)}
+                  onSaveFood={saveFoodFromMeal}
+                  onToggleFav={toggleFav}
+                />
+              ) : (
+                <MealCards
+                  meals={form.meals}
+                  proteins={mealProteins}
+                  etcProtein={etcProtein}
+                  onOpen={setEditingMeal}
+                  onEtcChange={(v) => setForm((f) => ({ ...f, meals: { ...f.meals, 기타: v } }))}
+                />
+              )}
+
+              {!editingMeal && (<>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
                 <div>
@@ -540,6 +606,7 @@ export default function HealthGuide() {
               <div style={{ fontSize: 11, color: C.textMuted, textAlign: "center", marginTop: 8 }}>
                 임시저장 → 나중에 수정 → 최종저장하면 노션에 업데이트돼요
               </div>
+              </>)}
             </Section>
           </div>
         )}
@@ -706,6 +773,9 @@ export default function HealthGuide() {
             </Section>
           </div>
         )}
+        {tab === 2 && (
+          <FoodsTab foods={foods} sync={foodSync} onAdd={addFood} onUpdate={updateFood} onDelete={deleteFood} onToggleFav={toggleFav} />
+        )}
       </div>
     </div>
   );
@@ -761,3 +831,277 @@ const inputStyle = {
   borderRadius: 14, fontSize: 14, background: C.cardAlt,
   outline: "none", boxSizing: "border-box", color: C.text,
 };
+
+// ─────────────────────────────────────────────
+// 음식 목록 / 끼니 입력 (알약 칩) 컴포넌트
+// ─────────────────────────────────────────────
+
+function ProteinBar({ segments, goal }) {
+  const widths = segments.reduce((acc, s) => {
+    const prev = acc.reduce((a, b) => a + b, 0);
+    acc.push(Math.max(0, Math.min(((s.value || 0) / goal) * 100, 100 - prev)));
+    return acc;
+  }, []);
+  return (
+    <div style={{ display: "flex", gap: 2, height: 14, background: C.cardAlt, borderRadius: 999, overflow: "hidden" }}>
+      {segments.map((s, i) => widths[i] > 0 ? <div key={i} style={{ width: `${widths[i]}%`, background: s.color }} /> : null)}
+    </div>
+  );
+}
+
+const SEGMENT_COLORS = [C.lime, C.mint, "#B7E84A", "#5FE0A0", "#9DF07C"];
+
+function MealCards({ meals, proteins, etcProtein, onOpen, onEtcChange }) {
+  const total = round1(proteins.reduce((a, b) => a + b, 0) + etcProtein);
+  const parts = [...proteins, etcProtein].filter((p) => p > 0).map(round1);
+  const segments = [...proteins, etcProtein].map((v, i) => ({ value: v, color: SEGMENT_COLORS[i % SEGMENT_COLORS.length] }));
+  return (
+    <div style={{ marginBottom: 14 }}>
+      {MEAL_KEYS.map((k, i) => (
+        <button key={k} onClick={() => onOpen(k)} style={{
+          width: "100%", textAlign: "left", background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20,
+          padding: "14px 18px", marginBottom: 10, display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
+          color: C.text, fontFamily: "inherit",
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{k}</div>
+            <div style={{ fontSize: 12, color: meals[k].length ? C.textDim : C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {meals[k].length ? meals[k].map((c) => c.name).join(", ") : "눌러서 음식 추가"}
+            </div>
+          </div>
+          {proteins[i] > 0 && <span style={{ fontSize: 12, color: C.lime, fontWeight: 700 }}>{round1(proteins[i])}g</span>}
+          <span style={{ color: C.textMuted, fontSize: 18 }}>›</span>
+        </button>
+      ))}
+
+      <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "14px 18px", marginBottom: 10 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>기타</div>
+        <input type="text" placeholder="커피 한 잔 (프로틴 없는 것들)" value={meals.기타} onChange={(e) => onEtcChange(e.target.value)} style={inputStyle} />
+      </div>
+
+      <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "14px 18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: C.textMuted }}>오늘의 프로틴</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: total >= GOAL_PROTEIN ? C.lime : C.text }}>
+            {total}g{parts.length > 1 ? `(${parts.join("+")})` : ""}{" "}
+            <span style={{ color: C.textMuted, fontWeight: 500 }}>/ {GOAL_PROTEIN}g</span>
+          </span>
+        </div>
+        <ProteinBar segments={segments} goal={GOAL_PROTEIN} />
+      </div>
+    </div>
+  );
+}
+
+function MealEditor({ meal, chips, foods, otherProtein, onChange, onDone, onSaveFood, onToggleFav }) {
+  const [query, setQuery] = useState("");
+  const [directProtein, setDirectProtein] = useState("");
+  const [directKcal, setDirectKcal] = useState("");
+  const [saveToList, setSaveToList] = useState(false);
+
+  const q = normName(query);
+  const matches = q ? foods.filter((f) => normName(f.name).includes(q)).slice(0, 6) : [];
+  const favs = foods.filter((f) => f.fav);
+  const quick = (favs.length ? favs : foods).slice(0, 8);
+  const mealProtein = sumProtein(chips);
+  const mealKcal = sumKcal(chips);
+  const total = otherProtein + mealProtein;
+
+  const addFromList = (f) => {
+    onChange([...chips, { id: uid(), name: f.name, protein: f.protein, kcal: f.kcal }]);
+    setQuery("");
+  };
+  const addDirect = () => {
+    const name = cleanName(query);
+    if (!name) return;
+    const chip = { id: uid(), name, protein: toNum(directProtein), kcal: toNum(directKcal) };
+    onChange([...chips, chip]);
+    if (saveToList) onSaveFood({ name, protein: chip.protein, kcal: chip.kcal });
+    setQuery(""); setDirectProtein(""); setDirectKcal("");
+  };
+  const removeChip = (id) => onChange(chips.filter((c) => c.id !== id));
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>{meal}</div>
+
+      <input
+        type="text"
+        placeholder="음식 검색 또는 직접 입력"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (matches[0]) addFromList(matches[0]); else addDirect(); } }}
+        style={inputStyle}
+      />
+
+      {query.trim() && (
+        <div style={{ background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 18, padding: "8px 14px", marginTop: 8 }}>
+          {matches.map((f) => (
+            <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.borderSoft}` }}>
+              <button onClick={() => onToggleFav(f.id)} aria-label="자주 쓰는 음식 토글" style={{ background: "none", border: "none", color: f.fav ? C.lime : C.textMuted, fontSize: 16, cursor: "pointer", padding: 0 }}>{f.fav ? "★" : "☆"}</button>
+              <button onClick={() => addFromList(f)} style={{ flex: 1, display: "flex", justifyContent: "space-between", background: "none", border: "none", color: C.text, fontSize: 13, cursor: "pointer", padding: 0, fontFamily: "inherit", textAlign: "left" }}>
+                <span>{f.name}</span>
+                <span style={{ color: C.textDim }}>{f.kcal}kcal · {round1(f.protein)}g</span>
+              </button>
+            </div>
+          ))}
+          <div style={{ padding: "12px 0 6px" }}>
+            <div style={{ fontSize: 13, marginBottom: 10 }}><b>{query.trim()}</b> <span style={{ color: C.textDim }}>직접 추가하기</span></div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              <input type="number" inputMode="decimal" placeholder="단백질(g)" value={directProtein} onChange={(e) => setDirectProtein(e.target.value)} style={inputStyle} />
+              <input type="number" inputMode="decimal" placeholder="칼로리(선택)" value={directKcal} onChange={(e) => setDirectKcal(e.target.value)} style={inputStyle} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textDim }}>
+                음식 목록에 저장
+                <button onClick={() => setSaveToList((v) => !v)} aria-pressed={saveToList} style={{ width: 44, height: 26, borderRadius: 999, border: "none", background: saveToList ? C.lime : C.card, position: "relative", cursor: "pointer" }}>
+                  <span style={{ position: "absolute", top: 3, left: saveToList ? 21 : 3, width: 20, height: 20, borderRadius: "50%", background: saveToList ? "#0a0a0c" : C.textMuted, transition: "left .15s" }} />
+                </button>
+              </label>
+              <button onClick={addDirect} style={{ padding: "10px 24px", background: C.gradient, color: "#0a0a0c", border: "none", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>추가</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "14px 0" }}>
+        {chips.length === 0 && <span style={{ fontSize: 12, color: C.textMuted }}>아직 추가한 음식이 없어요</span>}
+        {chips.map((c) => (
+          <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.lime, color: "#0a0a0c", borderRadius: 999, padding: "8px 10px 8px 16px", fontSize: 13, fontWeight: 600 }}>
+            {c.name}
+            <span style={{ fontSize: 11, opacity: 0.6, fontWeight: 500 }}>{round1(c.protein)}g</span>
+            <button onClick={() => removeChip(c.id)} aria-label={`${c.name} 삭제`} style={{ background: "none", border: "none", color: "#0a0a0c", opacity: 0.55, fontSize: 15, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>✕</button>
+          </span>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>{favs.length ? "자주 쓰는 음식" : "음식 목록에서 빠르게 추가"}</div>
+      {foods.length === 0 ? (
+        <div style={{ fontSize: 12, color: C.textMuted, background: C.card, borderRadius: 16, padding: "12px 14px", marginBottom: 14 }}>
+          🍚 <b>음식 목록</b> 탭에서 자주 먹는 음식을 등록하면 여기서 한 번에 추가할 수 있어요.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+          {quick.map((f) => (
+            <button key={f.id} onClick={() => addFromList(f)} style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.text, borderRadius: 999, padding: "9px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ color: C.textMuted, marginRight: 4 }}>+</span>{f.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "14px 18px", marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: C.textMuted }}>오늘의 프로틴</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: total >= GOAL_PROTEIN ? C.lime : C.text }}>
+            {round1(total)}g <span style={{ color: C.textMuted, fontWeight: 500 }}>/ {GOAL_PROTEIN}g</span>
+          </span>
+        </div>
+        <ProteinBar segments={[{ value: otherProtein, color: "rgba(215,255,62,0.35)" }, { value: mealProtein, color: C.lime }]} goal={GOAL_PROTEIN} />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 11, color: C.textDim, marginTop: 10 }}>
+          <span>다른 끼니 <b style={{ color: C.text }}>{round1(otherProtein)}g</b></span>
+          <span>이번 끼니 <b style={{ color: C.lime }}>+{round1(mealProtein)}g</b></span>
+          <span>목표까지 <b style={{ color: C.text }}>{round1(Math.max(0, GOAL_PROTEIN - total))}g</b></span>
+          {mealKcal > 0 && <span>이번 끼니 약 <b style={{ color: C.text }}>{Math.round(mealKcal)}kcal</b></span>}
+        </div>
+      </div>
+
+      <button onClick={onDone} style={{ width: "100%", padding: "15px 0", background: C.gradient, color: "#0a0a0c", border: "none", borderRadius: 999, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>완료</button>
+    </div>
+  );
+}
+
+function FoodsTab({ foods, sync, onAdd, onUpdate, onDelete, onToggleFav }) {
+  const [mode, setMode] = useState(null); // null | "add" | food id (수정 중)
+  const [draft, setDraft] = useState({ name: "", kcal: "", protein: "" });
+  const [err, setErr] = useState("");
+  const [query, setQuery] = useState("");
+  const [confirmId, setConfirmId] = useState(null);
+
+  const openAdd = () => { setDraft({ name: "", kcal: "", protein: "" }); setErr(""); setMode("add"); };
+  const openEdit = (f) => { setDraft({ name: f.name, kcal: f.kcal ? String(f.kcal) : "", protein: f.protein ? String(f.protein) : "" }); setErr(""); setMode(f.id); };
+  const submit = () => {
+    const name = cleanName(draft.name);
+    if (!name) { setErr("음식명을 입력해 주세요"); return; }
+    const editingId = mode === "add" ? null : mode;
+    if (foods.some((f) => f.id !== editingId && normName(f.name) === normName(name))) { setErr("이미 목록에 있는 음식이에요"); return; }
+    const item = { name, kcal: toNum(draft.kcal), protein: toNum(draft.protein) };
+    if (editingId) onUpdate(editingId, item); else onAdd(item);
+    setMode(null);
+  };
+
+  const shown = query.trim() ? foods.filter((f) => normName(f.name).includes(normName(query))) : foods;
+  const syncLabel = sync === "saving" ? "저장 중…" : sync === "saved" ? "✅ 저장됨" : sync === "error" ? "⚠️ 노션 저장 실패 (이 기기에는 저장됨)" : "";
+  const cols = "28px 1fr 58px 52px 58px";
+
+  const form = (
+    <div style={{ background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 20, padding: 16, marginBottom: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>{mode === "add" ? "음식 추가" : "음식 수정"}</div>
+      <input type="text" placeholder="음식명 (예: 계란 2개)" value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} style={{ ...inputStyle, marginBottom: 8, background: C.card }} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+        <input type="number" inputMode="decimal" placeholder="칼로리 (kcal)" value={draft.kcal} onChange={(e) => setDraft((d) => ({ ...d, kcal: e.target.value }))} style={{ ...inputStyle, background: C.card }} />
+        <input type="number" inputMode="decimal" placeholder="단백질 (g)" value={draft.protein} onChange={(e) => setDraft((d) => ({ ...d, protein: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={{ ...inputStyle, background: C.card }} />
+      </div>
+      {err && <div style={{ fontSize: 11, color: C.red, marginBottom: 8 }}>{err}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+        <button onClick={() => setMode(null)} style={{ padding: "12px 0", background: C.card, color: C.textDim, border: "none", borderRadius: 999, fontSize: 13, cursor: "pointer" }}>취소</button>
+        <button onClick={submit} style={{ padding: "12px 0", background: C.gradient, color: "#0a0a0c", border: "none", borderRadius: 999, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{mode === "add" ? "추가" : "저장"}</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, letterSpacing: 1 }}>음식 목록 ({foods.length})</div>
+          {syncLabel && <div style={{ fontSize: 10, color: sync === "error" ? C.red : C.textMuted, marginTop: 3 }}>{syncLabel}</div>}
+        </div>
+        <button onClick={openAdd} style={{ padding: "10px 18px", background: C.gradient, color: "#0a0a0c", border: "none", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ 음식 추가</button>
+      </div>
+
+      {mode && form}
+
+      {foods.length > 5 && (
+        <input type="text" placeholder="음식 검색" value={query} onChange={(e) => setQuery(e.target.value)} style={{ ...inputStyle, marginBottom: 12 }} />
+      )}
+
+      {foods.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+          아직 등록한 음식이 없어요<br />
+          <span style={{ fontSize: 12 }}>자주 먹는 음식을 등록해 두면<br />오늘 기록에서 알약(칩)으로 바로 추가할 수 있어요</span>
+        </div>
+      ) : (
+        <div style={{ background: C.card, border: `1px solid ${C.borderSoft}`, borderRadius: 20, padding: "6px 14px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 4, padding: "10px 0", fontSize: 10, color: C.textMuted, borderBottom: `1px solid ${C.borderSoft}` }}>
+            <span />
+            <span>음식명</span>
+            <span style={{ textAlign: "right" }}>칼로리</span>
+            <span style={{ textAlign: "right" }}>단백질</span>
+            <span />
+          </div>
+          {shown.map((f, i) => (
+            <div key={f.id} style={{ display: "grid", gridTemplateColumns: cols, gap: 4, alignItems: "center", padding: "10px 0", borderBottom: i < shown.length - 1 ? `1px solid ${C.borderSoft}` : "none", fontSize: 13 }}>
+              <button onClick={() => onToggleFav(f.id)} aria-label="자주 쓰는 음식 토글" style={{ background: "none", border: "none", color: f.fav ? C.lime : C.textMuted, fontSize: 16, cursor: "pointer", padding: 0 }}>{f.fav ? "★" : "☆"}</button>
+              <span style={{ wordBreak: "keep-all" }}>{f.name}</span>
+              <span style={{ textAlign: "right", color: C.textDim }}>{f.kcal}<span style={{ fontSize: 9 }}>kcal</span></span>
+              <span style={{ textAlign: "right", color: C.lime, fontWeight: 700 }}>{round1(f.protein)}<span style={{ fontSize: 9, fontWeight: 500 }}>g</span></span>
+              <span style={{ display: "flex", justifyContent: "flex-end", gap: 4 }}>
+                <button onClick={() => openEdit(f)} aria-label="수정" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, padding: 2 }}>✏️</button>
+                {confirmId === f.id ? (
+                  <button onClick={() => { onDelete(f.id); setConfirmId(null); }} style={{ background: C.redDim, border: "none", color: C.red, borderRadius: 999, fontSize: 10, padding: "3px 7px", cursor: "pointer" }}>삭제?</button>
+                ) : (
+                  <button onClick={() => { setConfirmId(f.id); setTimeout(() => setConfirmId((c) => (c === f.id ? null : c)), 3000); }} aria-label="삭제" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", fontSize: 13, padding: 2 }}>✕</button>
+                )}
+              </span>
+            </div>
+          ))}
+          {shown.length === 0 && <div style={{ textAlign: "center", padding: "20px 0", fontSize: 12, color: C.textMuted }}>검색 결과가 없어요</div>}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: C.textMuted, textAlign: "center", marginTop: 12, lineHeight: 1.6 }}>
+        ★ 표시한 음식은 오늘 기록의 &quot;자주 쓰는 음식&quot;에 바로 보여요
+      </div>
+    </div>
+  );
+}

@@ -15,7 +15,10 @@ export async function GET() {
     },
     body: JSON.stringify({
       page_size: 100,
-      filter: { property: "날짜", title: { does_not_contain: "WEEK_" } },
+      filter: { and: [
+        { property: "날짜", title: { does_not_contain: "WEEK_" } },
+        { property: "날짜", title: { does_not_contain: "FOODS_LIST" } },
+      ] },
       sorts: [{ property: "날짜", direction: "descending" }],
     }),
   });
