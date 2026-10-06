@@ -244,6 +244,10 @@ export default function HealthGuide() {
   const [saveStatus, setSaveStatus] = useState("idle");
   const [draftPageUrl, setDraftPageUrl] = useState(null);
   const [pendingDraft, setPendingDraft] = useState(null); // 노션에서 찾은 임시저장본 (불러오기 전)
+  const [pendingRecord, setPendingRecord] = useState(null); // 노션에 이미 저장된 그날의 기록 (불러오기 전)
+  const [recordExists, setRecordExists] = useState(false); // 그날 노션 기록이 있는지
+  const [recordLoaded, setRecordLoaded] = useState(false); // 그 기록을 폼에 불러와 수정 중인지
+  const formCache = useRef({}); // 날짜별 작성 중인 폼 임시 보관
   const [loadStatus, setLoadStatus] = useState("loading");
   const [expandedWeek, setExpandedWeek] = useState(null);
   const [weeklyNotes, setWeeklyNotes] = useState({}); // weekStart -> { text, status, editing }
@@ -308,30 +312,75 @@ export default function HealthGuide() {
     return () => { cancelled = true; };
   }, [selectedDate]);
 
-  const restoreDraft = () => {
-    if (!pendingDraft) return;
-    const d = pendingDraft.draft;
+  // 선택한 날짜에 노션에 이미 저장된 기록이 있는지 확인 (있으면 불러오기 버튼 표시)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const title = formatKR(fromDateInput(selectedDate));
+        const res = await fetch(`/api/notion-record?date=${encodeURIComponent(title)}`);
+        const result = await res.json();
+        if (!cancelled && result.success && result.found) { setPendingRecord(result); setRecordExists(true); }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate]);
+
+  // 불러온 기록(임시저장본/노션 기록)을 입력 폼에 채우기
+  const applyRecordToForm = (d) => {
     const meals = { 아침: [], 점심: [], 간식: [], 저녁: [], 기타: "" };
+    const extra = [];
     (d.mealMemo || "").split("\n").forEach((line) => {
       const m = line.match(/^\[(아침|점심|간식|저녁|기타)\]\s?(.*)$/);
-      if (!m) return;
+      if (!m) { if (line.trim()) extra.push(line.trim()); return; } // [끼니] 표시가 없는 예전 기록은 기타로 보존
       if (m[1] === "기타") meals.기타 = m[2];
       else meals[m[1]] = parseMealText(m[2], foods);
     });
-    const sleeps = parseSleep(d.sleep);
+    if (extra.length) meals.기타 = [meals.기타, ...extra].filter(Boolean).join(" / ");
     setForm({
       meals,
       steps: d.steps ? String(d.steps) : "",
       water: d.water ? String(d.water) : "",
-      sleeps,
+      sleeps: parseSleep(d.sleep),
       condition: d.condition || "",
       exercise: d.exercise || "",
       memo: d.memo || "",
       weight: d.weight ? String(d.weight) : "",
     });
     setShowWeight(!!d.weight);
+    setEditingMeal(null);
+  };
+
+  const restoreDraft = () => {
+    if (!pendingDraft) return;
+    applyRecordToForm(pendingDraft.draft);
     setDraftPageUrl("saved");
     setPendingDraft(null);
+  };
+
+  const loadRecord = () => {
+    if (!pendingRecord) return;
+    applyRecordToForm(pendingRecord.record);
+    setRecordLoaded(true);
+    setDraftPageUrl(null);
+    setPendingRecord(null);
+  };
+
+  // 날짜를 바꿀 때: 작성 중이던 폼은 그 날짜 이름표로 잠시 보관하고, 새 날짜는 빈 폼(또는 보관해 둔 폼)으로 시작
+  const changeDate = (next) => {
+    if (!next || next === selectedDate) return;
+    formCache.current[selectedDate] = { form, showWeight, recordLoaded };
+    const saved = formCache.current[next];
+    setForm(saved ? saved.form : EMPTY_FORM);
+    setShowWeight(saved ? saved.showWeight : false);
+    setRecordLoaded(saved ? saved.recordLoaded : false);
+    setRecordExists(false);
+    setPendingRecord(null);
+    setPendingDraft(null);
+    setDraftPageUrl(null);
+    setEditingMeal(null);
+    setSaveStatus("idle");
+    setSelectedDate(next);
   };
 
   const loadFromNotion = async () => {
@@ -452,6 +501,7 @@ export default function HealthGuide() {
   };
 
   const handleSave = async () => {
+    if (recordExists && !recordLoaded && !window.confirm(`${dateLabel}에는 노션에 이미 저장된 기록이 있어요.\n지금 입력한 내용으로 덮어쓸까요?\n(기존 내용을 고치려면 먼저 "기록 불러오기"를 눌러주세요)`)) return;
     setSaveStatus("saving");
     const payload = buildPayload(dateLabel);
     try {
@@ -465,6 +515,9 @@ export default function HealthGuide() {
         setRecords(r => ({ ...r, [selectedDate]: { ...payload, protein: estimatedProtein } }));
         setDraftPageUrl(null);
         setPendingDraft(null);
+        setPendingRecord(null);
+        setRecordExists(true);
+        setRecordLoaded(true);
         fetch(`/api/notion-draft?date=${encodeURIComponent(dateLabel + " (임시)")}`, { method: "DELETE" }).catch(() => {});
         setSaveStatus("updated");
         setTimeout(() => { setSaveStatus("idle"); }, 2500);
@@ -481,6 +534,7 @@ export default function HealthGuide() {
     error: { draft: { label: "📝 임시저장", color: C.cardAlt, text: C.textDim }, save: { label: "⚠️ 오류 발생", color: C.redDim, text: C.red } },
   };
   const sc = statusConfig[saveStatus] || statusConfig.idle;
+  const saveLabel = sc.save.label === "노션에 최종저장 →" && recordExists ? "노션에 업데이트 →" : sc.save.label;
 
   const weekGroups = {};
   Object.keys(records).forEach(date => {
@@ -531,10 +585,29 @@ export default function HealthGuide() {
                 type="date"
                 value={selectedDate}
                 max={toDateInput(new Date())}
-                onChange={(e) => { setSelectedDate(e.target.value); setPendingDraft(null); setDraftPageUrl(null); setSaveStatus("idle"); }}
+                onChange={(e) => changeDate(e.target.value)}
                 style={{ border: `1px solid ${C.border}`, borderRadius: 999, padding: "7px 14px", fontSize: 13, color: C.text, background: C.cardAlt, cursor: "pointer", colorScheme: "dark" }}
               />
             </div>
+
+            {pendingRecord && !recordLoaded && (
+              <div style={{ background: C.cardAlt, border: `1px solid ${C.border}`, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontSize: 12, color: C.text }}>
+                <div style={{ marginBottom: 10 }}>
+                  📋 {dateLabel}은 노션에 이미 기록이 있어요
+                  {pendingRecord.savedAt ? <span style={{ color: C.textMuted }}> (마지막 수정 {new Date(pendingRecord.savedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })})</span> : null}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={loadRecord} style={{ flex: 2, padding: "10px 0", background: C.gradient, color: "#0a0a0c", border: "none", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>기록 불러오기</button>
+                  <button onClick={() => setPendingRecord(null)} style={{ flex: 1, padding: "10px 0", background: C.card, color: C.textDim, border: "none", borderRadius: 999, fontSize: 13, cursor: "pointer" }}>닫기</button>
+                </div>
+              </div>
+            )}
+
+            {recordLoaded && (
+              <div style={{ background: C.limeDim, borderRadius: 16, padding: "10px 16px", marginBottom: 14, fontSize: 12, color: C.lime, display: "flex", alignItems: "center", gap: 6 }}>
+                <span>✏️</span> 노션 기록을 불러왔어요 — 수정하고 저장하면 업데이트돼요
+              </div>
+            )}
 
             {pendingDraft && (
               <div style={{ background: C.limeDim, border: `1px solid ${C.lime}`, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontSize: 12, color: C.lime }}>
@@ -662,7 +735,7 @@ export default function HealthGuide() {
                   padding: "14px 0", background: sc.save.color, color: sc.save.text,
                   border: "none", borderRadius: 999, fontSize: 15, fontWeight: 700, cursor: "pointer",
                 }}>
-                  {sc.save.label}
+                  {saveLabel}
                 </button>
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, textAlign: "center", marginTop: 8 }}>
